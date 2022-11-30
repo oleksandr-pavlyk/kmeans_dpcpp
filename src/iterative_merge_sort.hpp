@@ -203,7 +203,7 @@ void merge_impl(const std::size_t offset, Ptr in_acc, Ptr out_acc,
 
 template <typename T>
 std::vector<sycl::event>
-iterative_merge_sort_take3(
+iterative_merge_sort(
     sycl::queue &q,
     T *input,
     T *output,
