@@ -202,7 +202,7 @@ void merge_impl(const std::size_t offset, Ptr in_acc, Ptr out_acc,
 } // end of anonymous namespace
 
 template <typename T>
-std::vector<sycl::event>
+sycl::event
 iterative_merge_sort(
     sycl::queue &q,
     T *input,
@@ -285,7 +285,7 @@ iterative_merge_sort(
 
     if (n_groups == 1)
     {
-        return {base_sort_ev};
+        return base_sort_ev;
     }
 
     T *src = output;
@@ -361,5 +361,5 @@ iterative_merge_sort(
             });
     }
 
-    return {dep_ev};
+    return dep_ev;
 }
