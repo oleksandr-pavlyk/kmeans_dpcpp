@@ -396,6 +396,157 @@ py_select_samples_far_from_centroid(
   return std::make_pair(ht_ev, comp_ev);
 }
 
+std::pair<sycl::event, sycl::event>
+py_relocate_empty_clusters(
+  size_t n_empty_clusters,
+  dpctl::tensor::usm_ndarray X_t,             // IN (n_features, n_samples, )  dataT
+  dpctl::tensor::usm_ndarray sample_weights,  // IN (n_samples, )              dataT
+  dpctl::tensor::usm_ndarray assignment_id,   // IN (n_samples, )              indT
+  dpctl::tensor::usm_ndarray empty_clusters_list, // IN (n_clusters)           indT
+  dpctl::tensor::usm_ndarray sq_dist_to_nearest_centroid, // IN (n_samples,)   dataT
+  dpctl::tensor::usm_ndarray centroid_t,      // IN-OUT  (n_features, n_samples, )  dataT
+  dpctl::tensor::usm_ndarray cluster_sizes,   // IN-OUT  (n_clusters, )        dataT
+  dpctl::tensor::usm_ndarray per_sample_inertia, // IN-OUT (n_samples, )       dataT
+  sycl::queue q,
+  const std::vector<sycl::event> &depends={}
+) 
+{
+  if ( 2 != X_t.get_ndim() || 1 != sample_weights.get_ndim() || 
+        1 != assignment_id.get_ndim() || 
+        1 != empty_clusters_list.get_ndim() || 
+        1 != sq_dist_to_nearest_centroid.get_ndim() ||
+        2 != centroid_t.get_ndim() ||
+        1 != cluster_sizes.get_ndim() ||
+        1 != per_sample_inertia.get_ndim()
+      )
+  {
+    throw py::value_error("Arguments have inconsistent array dimensionality.");
+  }
+
+  if (!X_t.is_c_contiguous() || !sample_weights.is_c_contiguous() || 
+      !assignment_id.is_c_contiguous() || !empty_clusters_list.is_c_contiguous() ||
+      !sq_dist_to_nearest_centroid.is_c_contiguous() || !centroid_t.is_c_contiguous() || 
+      !cluster_sizes.is_c_contiguous() || !per_sample_inertia.is_c_contiguous())
+  {
+    throw py::value_error("Inputs must be C-contiguous");
+  }
+
+  py::ssize_t n_samples = X_t.get_shape(1);
+  py::ssize_t n_features = X_t.get_shape(0);
+  py::ssize_t n_clusters = empty_clusters_list.get_shape(0);
+
+  if (n_samples != sample_weights.get_shape(0) || n_samples != assignment_id.get_shape(0) || 
+    n_samples != sq_dist_to_nearest_centroid.get_shape(0) ||
+    n_samples != centroid_t.get_shape(1) || 
+    n_features != centroid_t.get_shape(0) || n_clusters != cluster_sizes.get_shape(0) ||
+    n_samples != per_sample_inertia.get_shape(0)
+  ) 
+  {
+    throw py::value_error("Input dimensions are inconsistent");
+  }
+
+  if (n_empty_clusters == 0) {
+    throw py::value_error("n_empty_clusters must be non-zero.");
+  }
+
+  if (!dpctl::utils::queues_are_compatible(q, {
+        X_t.get_queue(), sample_weights.get_queue(), 
+        assignment_id.get_queue(), empty_clusters_list.get_queue(), 
+        sq_dist_to_nearest_centroid.get_queue(), centroid_t.get_queue(),
+        cluster_sizes.get_queue(), per_sample_inertia.get_queue()
+        }))
+  {
+    throw py::value_error("Execution queue is not compatible with allocation queues.");
+  }
+
+  int dataT_typenum = X_t.get_typenum();
+  int indT_typenum = assignment_id.get_typenum();
+
+  if (dataT_typenum != sample_weights.get_typenum() || 
+      indT_typenum != empty_clusters_list.get_typenum() || 
+      dataT_typenum != sq_dist_to_nearest_centroid.get_typenum() ||
+      dataT_typenum != centroid_t.get_typenum() ||
+      dataT_typenum != cluster_sizes.get_typenum() || 
+      dataT_typenum != per_sample_inertia.get_typenum()) 
+  {
+    throw py::value_error("Inconsistent array elemental data types");
+  }
+
+  const auto &api = dpctl::detail::dpctl_capi::get();
+  size_t work_group_size = 64;
+
+  sycl::event comp_ev; 
+  if (dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = float;
+    using indT = std::int32_t;
+
+    comp_ev = relocate_empty_clusters<dataT, indT>(
+      q,
+      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
+      assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
+      sq_dist_to_nearest_centroid.get_data<dataT>(), 
+      centroid_t.get_data<dataT>(), cluster_sizes.get_data<dataT>(), 
+      per_sample_inertia.get_data<dataT>(),
+      depends
+    );
+  } else if (dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = float;
+    using indT = std::int64_t;
+
+    comp_ev = relocate_empty_clusters<dataT, indT>(
+      q,
+      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
+      assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
+      sq_dist_to_nearest_centroid.get_data<dataT>(), 
+      centroid_t.get_data<dataT>(), cluster_sizes.get_data<dataT>(),
+      per_sample_inertia.get_data<dataT>(),
+      depends
+    );
+  } else if (dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = double;
+    using indT = std::int32_t;
+
+    comp_ev = relocate_empty_clusters<dataT, indT>(
+      q,
+      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
+      assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
+      sq_dist_to_nearest_centroid.get_data<dataT>(), 
+      centroid_t.get_data<dataT>(), cluster_sizes.get_data<dataT>(),
+      per_sample_inertia.get_data<dataT>(),
+      depends
+    );
+  } else if (dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = double;
+    using indT = std::int64_t;
+
+    comp_ev = relocate_empty_clusters<dataT, indT>(
+      q,
+      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
+      assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
+      sq_dist_to_nearest_centroid.get_data<dataT>(), 
+      centroid_t.get_data<dataT>(), cluster_sizes.get_data<dataT>(),
+      per_sample_inertia.get_data<dataT>(),
+      depends
+    );
+  } else {
+    throw py::value_error("Unsupported data types");
+  }
+
+  sycl::event ht_ev = dpctl::utils::keep_args_alive(q, 
+    { 
+      X_t, sample_weights, assignment_id, empty_clusters_list, 
+      sq_dist_to_nearest_centroid, centroid_t, cluster_sizes
+    },
+    {comp_ev}
+  );
+
+  return std::make_pair(ht_ev, comp_ev);
+}
+
 PYBIND11_MODULE(_kmeans_dpcpp, m) {
   m.def(
     "broadcast_divide", &py_broadcast_divide,
@@ -435,9 +586,25 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
 
   m.def(
     "select_samples_far_from_centroid", &py_select_samples_far_from_centroid,
-    "",
+    "select_samples_far_from_centroid(n_selected, distance_to_centroid, threshold, selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold, sycl_queue=q, depends=[])",
     py::arg("n_selected"), py::arg("distance_to_centroid"), py::arg("threshold"),
     py::arg("selected_samples_idx"), py::arg("n_selected_gt_threshold"), 
     py::arg("n_selected_eq_threshold"), py::arg("sycl_queue"), py::arg("depends") = py::list()
+  );
+
+  m.def(
+    "relocate_empty_clusters", &py_relocate_empty_clusters,
+    "",
+    py::arg("n_empty_clusters"),    // int
+    py::arg("X_t"),                 // IN (n_features, n_samples,)      dataT
+    py::arg("sample_weights"),      // IN (n_samples, )                 dataT
+    py::arg("assignment_id"),       // IN (n_samples, )                 indT
+    py::arg("empty_clusters_list"), // IN (n_clusters, )                indT
+    py::arg("sq_dist_to_nearest_centroid"), // IN (n_samples, )         dataT
+    py::arg("centroid_t"),          // INTOUT (n_features, n_samples,)  dataT
+    py::arg("cluster_sizes"),       // INOUT  (n_clusters, )            dataT
+    py::arg("per_sample_inertia"),  // INOUT  (n_samples,)              dataT
+    py::arg("sycl_queue"),
+    py::arg("depends") = py::list()
   );
 }

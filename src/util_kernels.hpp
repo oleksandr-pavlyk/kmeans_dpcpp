@@ -165,7 +165,7 @@ sycl::event
 compute_threshold_kernel(
     sycl::queue q,
     size_t n_samples,
-    dataT *data,
+    dataT const *data,
     size_t n_empty_clusters,
     dataT *threshold,
     const std::vector<sycl::event> &depends={}
@@ -306,15 +306,15 @@ relocate_empty_clusters_kernel(
     size_t n_samples,
     size_t n_features,
     size_t n_clusters,
-    indT n_empty_clusters,
+    size_t n_empty_clusters,
     indT *n_selected_gt_threshold,   // USM pointer
     size_t work_group_size,
     //
     dataT const *X_t,                  // IN, READ ONLY (n_features, n_samples,)
     dataT const *sample_weight,        // IN, READ ONLY (n_samples,)
-    indT *assignment_id,               // IN  (n_samples,)
-    indT *samples_far_from_center,     // IN  (n_samples, )
-    dataT const *empty_clusters_list,  // IN  (n_clusters, )
+    indT const *assignment_id,            // IN  (n_samples,)
+    indT const *samples_far_from_center,  // IN  (n_samples, )
+    indT const *empty_clusters_list,   // IN  (n_clusters, )
     dataT *per_sample_inertia,         // INOUT (n_samples,)
     dataT *centroids_t,                // INOUT (n_features, n_clusters,)  
     dataT *cluster_sizes,              // INOUT (n_clusters,)
@@ -341,7 +341,7 @@ relocate_empty_clusters_kernel(
                     if (feature_idx >= n_features) return;
 
                     indT n_selected_gt_threshold_ = n_selected_gt_threshold[0] - 1;
-                    indT relocated_cluster_idx = static_cast<indT>(empty_clusters_list[relocated_idx]);
+                    indT relocated_cluster_idx = empty_clusters_list[relocated_idx];
                     indT new_location_X_idx = samples_far_from_center[n_selected_gt_threshold_ - relocated_idx];
                     indT new_location_previous_assignment = assignment_id[new_location_X_idx];
 
@@ -383,14 +383,14 @@ relocate_empty_clusters(
     sycl::queue q,
     size_t n_samples, 
     size_t n_features, 
-    indT n_clusters,
+    size_t n_clusters,
     size_t work_group_size,
     //
-    indT n_empty_clusters,
+    size_t n_empty_clusters,
     dataT const *X_t,                          // IN (n_features, n_samples)
     dataT const *sample_weight,                // IN (n_samples, )
     indT const *assignment_id,                 // IN (n_samples, )
-    dataT const *empty_clusters_list,          // IN (n_clusters, )
+    indT const *empty_clusters_list,           // IN (n_clusters, )
     dataT const *sq_dist_to_nearest_centroid,  // IN (n_samples, )
     dataT *centroids_t,                        // INOUT (n_features, n_clusters)
     dataT *cluster_sizes,                      // INOUT (n_clusters,)
@@ -403,7 +403,7 @@ relocate_empty_clusters(
     dataT *threshold = sycl::malloc_device<dataT>(1, q);
 
     sycl::event compute_threshold_ev = 
-        compute_threshold_kernel(q, n_samples, sq_dist_to_nearest_centroid, n_empty_clusters, depends);
+        compute_threshold_kernel(q, n_samples, sq_dist_to_nearest_centroid, n_empty_clusters, threshold, depends);
 
     indT *samples_far_from_center = sycl::malloc_device<indT>(n_samples + 2, q);
     indT *n_selected = samples_far_from_center + n_samples;
@@ -417,7 +417,7 @@ relocate_empty_clusters(
     sycl::event select_samples_far_from_centroid_ev = 
         select_samples_far_from_centroid_kernel<dataT, indT>(
             q,
-            n_selected, n_samples, work_group_size,
+            n_empty_clusters, n_samples, work_group_size,
             //
             sq_dist_to_nearest_centroid, // IN (n_samples,)
             threshold,                   // IN (1, )

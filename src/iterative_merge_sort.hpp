@@ -205,7 +205,7 @@ template <typename T>
 sycl::event
 iterative_merge_sort(
     sycl::queue &q,
-    T *input,
+    T const *input,
     T *output,
     size_t n,
     const std::vector<sycl::event> &depends = {})
