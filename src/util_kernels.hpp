@@ -178,7 +178,7 @@ compute_threshold_kernel(
                 sycl::property_list prop( {sycl::property::reduction::initialize_to_identity{}} );
                 auto maxReduction = sycl::reduction(threshold, sycl::maximum<dataT>(), prop);
                 cgh.parallel_for(
-                    {n_samples}, 
+                    sycl::range<1>(n_samples), 
                     maxReduction, 
                     [=] (sycl::id<1> wid, auto &max) {
                         max.combine(data[wid]);
@@ -212,7 +212,7 @@ template <typename dataT, typename indT>
 sycl::event
 select_samples_far_from_centroid_kernel(
     sycl::queue q,
-    size_t n_selected, 
+    size_t n_empty_clusters, 
     size_t n_samples, 
     size_t work_group_size,
     //
@@ -244,7 +244,7 @@ select_samples_far_from_centroid_kernel(
             cgh.depends_on(depends);
 
             cgh.parallel_for<class select_samples_far_from_cetrnoids_krn<dataT, indT>>(
-                {},
+                {n_samples},
                 [=](sycl::id<1> wid) {
                     size_t sample_idx = wid[0];
                     if (sample_idx >= n_samples) 
@@ -252,9 +252,9 @@ select_samples_far_from_centroid_kernel(
 
                     indT n_selected_gt_threshold_ = n_selected_gt_threshold[0];
                     indT n_selected_eq_threshold_ = n_selected_eq_threshold[0];
-                    indT max_n_selected_gt_threshold = n_selected - 1;
+                    indT max_n_selected_gt_threshold = n_empty_clusters - 1;
                     indT min_n_selected_eq_threshold = 2;
-                    indT max_n_selected_eq_threshold = n_selected + 1;
+                    indT max_n_selected_eq_threshold = n_empty_clusters + 1;
 
                     if ((n_selected_gt_threshold_ == max_n_selected_gt_threshold) && (n_selected_eq_threshold_ >= min_n_selected_eq_threshold))
                         return;
@@ -292,6 +292,8 @@ select_samples_far_from_centroid_kernel(
                 }
             );
         });
+
+    return res_ev;
 }
 
 template <typename dataT, typename indT>

@@ -116,3 +116,59 @@ def test_reduce_centroids_data_empty():
         dpt.asnumpy(out_centroids_t), Xnp.sum(axis=0), rtol = np.finfo(dataT).resolution)
     assert np.allclose(
         dpt.asnumpy(out_cluster_sizes), dpt.asnumpy(cluster_sizes_private_copies).sum(axis=0))
+
+
+def test_compute_threshold():
+    dataT = dpt.float32
+    n = 10**5
+    Xnp = np.random.randn(n).astype(dataT)
+    data = dpt.asarray(Xnp, dtype=dataT)
+
+    threshold = dpt.empty(tuple(), dtype=dataT)
+
+    q = data.sycl_queue
+    ht, _ = kdp.compute_threshold(data, 1, threshold, sycl_queue=q)
+    ht.wait()
+
+    assert float(threshold) == float(max(Xnp))
+
+    ht, _ = kdp.compute_threshold(data, 2, threshold, sycl_queue=q)
+    ht.wait()
+
+    assert float(threshold) == float(np.partition(Xnp, kth = n - 2)[n-2])
+
+
+def test_select_samples_far_from_centroid_kernel():
+    dataT = dpt.float32
+    indT = dpt.int32
+    n = 10**5
+    n_empty_clusters = 3
+    Xnp = np.random.standard_gamma(4, size=n).astype(dataT)
+
+    distance_to_centroid = dpt.asarray(Xnp, dtype=dataT)
+    threshold = dpt.empty(tuple(), dtype=dataT)
+
+    selected_samples_idx = dpt.full(n, 172, dtype=indT)
+    n_selected_gt_threshold = dpt.zeros(tuple(), dtype=indT)
+    n_selected_eq_threshold = dpt.ones(tuple(), dtype=indT)
+
+    q = threshold.sycl_queue
+    ht_ev, c_ev = kdp.compute_threshold(
+        distance_to_centroid, n_empty_clusters, threshold, sycl_queue=q)
+
+    # puts indices of distances greater than threshold at the beginning of selected_samples_idx
+    # and indices of distances equal to threshold at the end of the selected_samples_idx
+    ht_ev2, _ = kdp.select_samples_far_from_centroid(
+        n_empty_clusters, distance_to_centroid, threshold,
+        selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold, 
+        sycl_queue=q,
+        depends=[c_ev]
+    )
+
+    ht_ev2.wait()
+    ht_ev.wait()
+
+    assert int(n_selected_gt_threshold) + int(n_selected_eq_threshold) - 1 == n_empty_clusters
+    assert np.all(Xnp[dpt.asnumpy(selected_samples_idx[:int(n_selected_gt_threshold)])] > float(threshold))
+    assert np.all(Xnp[dpt.asnumpy(selected_samples_idx[1-int(n_selected_eq_threshold):])] == float(threshold))
+
