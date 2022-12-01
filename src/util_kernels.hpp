@@ -93,8 +93,8 @@ reduce_centroid_data_kernel(
     size_t n_clusters,
     size_t work_group_size,
     //
-    dataT *cluster_sizes_private_copies, // OUT  (n_copies, n_clusters)
-    dataT *centroids_t_private_copies,   // OUT  (n_copies, n_features, n_clusters)
+    dataT const *cluster_sizes_private_copies, // IN  (n_copies, n_clusters)
+    dataT const *centroids_t_private_copies,   // IN  (n_copies, n_features, n_clusters)
     dataT *cluster_sizes,         // OUT  (n_clusters)
     dataT *centroids_t,           // OUT  (n_features, n_clusters,)
     indT *empty_clusters_list,    // OUT  (n_clusters,)
@@ -102,13 +102,14 @@ reduce_centroid_data_kernel(
     const std::vector<sycl::event> &depends = {}
 ) {
 
-    sycl::event res_e = 
+    sycl::event res_ev = 
         q.submit([&] (sycl::handler &cgh) {
             cgh.depends_on(depends);
 
             size_t n_work_groups_for_clusters = 
                 quotient_ceil(n_clusters, work_group_size);
-            size_t gws = n_work_groups_for_clusters * work_group_size;
+            size_t n_work_items_for_clusters = n_work_groups_for_clusters * work_group_size;
+            size_t gws = n_work_items_for_clusters * n_features;
 
             cgh.parallel_for<class reduce_centroid_data_krn<dataT, indT>>(
                 sycl::nd_range<1>({gws}, {work_group_size}),
@@ -142,13 +143,12 @@ reduce_centroid_data_kernel(
                             // FIXME: this is race condition
                             if (sum_ == 0) {
                                 sycl::atomic_ref<
-                                    dataT,
+                                    indT,
                                     sycl::memory_order::relaxed,
                                     sycl::memory_scope::device,
                                     sycl::access::address_space::global_space> v(
                                         n_empty_clusters[0]);
-                                dataT i_ = v.fetch_add(dataT(1));
-                                size_t i = static_cast<size_t>(i_);
+                                indT i = v.fetch_add(indT(1));
                                 empty_clusters_list[i] = cluster_idx;
                             }
                         }
@@ -156,6 +156,8 @@ reduce_centroid_data_kernel(
                 }
             );
         });
+
+    return res_ev;
 }
 
 template <typename dataT>
@@ -321,9 +323,9 @@ relocate_empty_clusters_kernel(
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
-            size_t n_work_groups_for_cluster = quotient_ceil(n_features, work_group_size);
+            size_t n_work_groups_for_cluster = quotient_ceil(n_clusters, work_group_size);
             size_t n_work_items_for_cluster = n_work_groups_for_cluster * work_group_size;
-            size_t global_size = n_work_items_for_cluster * static_cast<size_t>(n_empty_clusters);
+            size_t global_size = n_work_items_for_cluster * n_features;
 
             cgh.parallel_for<class relocate_empty_clusters_krn<dataT, indT>>(
                 sycl::nd_range<1>({global_size}, {work_group_size}),
