@@ -172,3 +172,56 @@ def test_select_samples_far_from_centroid_kernel():
     assert np.all(Xnp[dpt.asnumpy(selected_samples_idx[:int(n_selected_gt_threshold)])] > float(threshold))
     assert np.all(Xnp[dpt.asnumpy(selected_samples_idx[1-int(n_selected_eq_threshold):])] == float(threshold))
 
+
+def test_relocate_empty_cluster():
+    dataT = np.float32
+    indT = np.uint32
+    n = 8
+
+    # 2 clusters, 8 3D points, uniform samples
+    Xnp = np.array([
+            [+1, +1, +1],
+            [+1, +1, -1],
+            [+1, -1, +1],
+            [-1, +1, +1],
+            [-1, -1, +1],
+            [-1, +1, -1],
+            [+1, -1, -1],
+            [-1, -1, -1],
+        ], dtype=dataT)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+
+    Cnp = np.array([[0.1, -0.1, 0.1], [5, 5, 5]], dtype=dataT)
+    Cnp_t = np.ascontiguousarray(Cnp.T)
+
+
+    sample_weights = dpt.ones(n, dtype=dataT)
+    X_t = dpt.asarray(Xnp_t, dtype=dataT)
+    centroid_t = dpt.asarray(Cnp_t, dtype=dataT)
+    empty_clusters_list = dpt.asarray([1, 0], dtype=indT)
+    sq_dist_to_nearest_centroid_np = np.min(np.square(Xnp[:, np.newaxis, :] - Cnp[np.newaxis, :, :]).sum(axis=-1), axis=-1)
+    sq_dist_to_nearest_centroid = dpt.asarray(sq_dist_to_nearest_centroid_np, dtype=dataT)
+
+    cluster_sizes = dpt.asarray([8, 0], dtype=dataT)
+    per_sample_inertia = sq_dist_to_nearest_centroid
+    n_empty_clusters = 1
+
+    assignment_id = dpt.asarray([0, 0, 0, 0, 0, 0, 0, 0], dtype=indT)
+
+    q = X_t.sycl_queue
+    ht, _ = kdp.relocate_empty_clusters(
+        n_empty_clusters,
+        X_t, sample_weights, assignment_id, empty_clusters_list, sq_dist_to_nearest_centroid,
+        centroid_t, cluster_sizes, per_sample_inertia,
+        sycl_queue = q
+    )
+    ht.wait()
+
+    # centroid_t, cluster_sizes, per_sample_ineria change
+    expected_updated_centroid_t = np.array([[0.1, -1], [-0.1, -1], [0.1, -1]], dtype=dataT)
+    expected_cluster_sizes = np.array([7, 1], dtype=dataT)
+    expected_per_sample_inertia = np.zeros(n, dtype=dataT)
+
+    assert np.allclose(expected_updated_centroid_t, dpt.asnumpy(centroid_t), rtol=np.finfo(dataT).resolution)
+    assert np.allclose(expected_cluster_sizes, dpt.asnumpy(cluster_sizes), rtol=np.finfo(dataT).resolution)
+    assert np.allclose(expected_per_sample_inertia, dpt.asnumpy(per_sample_inertia), rtol=np.finfo(dataT).resolution)
