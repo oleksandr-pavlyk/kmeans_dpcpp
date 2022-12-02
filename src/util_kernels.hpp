@@ -7,11 +7,11 @@
 #include "iterative_merge_sort.hpp"
 
 template <typename T>
-sycl::event 
+sycl::event
 broadcast_division_kernel(
     sycl::queue q,
-    size_t n_features, 
-    size_t n_clusters, 
+    size_t n_features,
+    size_t n_clusters,
     size_t, // work_group_size
     //
     T *new_centroids_t,        // IN & OUT  (n_features, n_clusters)
@@ -43,7 +43,7 @@ broadcast_division_kernel(
 template <typename T>
 class half_l2_norm_krn;
 
-// centroids_half_l2_norm_squared = np.square(centroids_t).sum(axis=0) / 2 
+// centroids_half_l2_norm_squared = np.square(centroids_t).sum(axis=0) / 2
 template <typename T>
 sycl::event
 half_l2_norm_kernel(
@@ -57,7 +57,7 @@ half_l2_norm_kernel(
     const std::vector<sycl::event> &depends = {}
 ) {
     // FIXME: write it more efficiently
-    sycl::event res_ev = 
+    sycl::event res_ev =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
             size_t global_size = quotient_ceil(n_clusters, work_group_size) * work_group_size;
@@ -85,7 +85,7 @@ template<typename dataT, typename indT>
 class reduce_centroid_data_krn;
 
 template<typename dataT, typename indT>
-sycl::event 
+sycl::event
 reduce_centroid_data_kernel(
     sycl::queue q,
     size_t n_centroids_private_copies,
@@ -102,11 +102,11 @@ reduce_centroid_data_kernel(
     const std::vector<sycl::event> &depends = {}
 ) {
 
-    sycl::event res_ev = 
+    sycl::event res_ev =
         q.submit([&] (sycl::handler &cgh) {
             cgh.depends_on(depends);
 
-            size_t n_work_groups_for_clusters = 
+            size_t n_work_groups_for_clusters =
                 quotient_ceil(n_clusters, work_group_size);
             size_t n_work_items_for_clusters = n_work_groups_for_clusters * work_group_size;
             size_t gws = n_work_items_for_clusters * n_features;
@@ -118,13 +118,13 @@ reduce_centroid_data_kernel(
                     size_t item_idx = it.get_local_linear_id();
                     size_t feature_idx = group_idx / n_work_groups_for_clusters;
                     size_t cluster_idx = item_idx + (
-                        (group_idx % n_work_groups_for_clusters) * work_group_size 
+                        (group_idx % n_work_groups_for_clusters) * work_group_size
                     );
 
                     if (cluster_idx < n_clusters) {
                         {
                             dataT sum_(0);
-                            size_t offset = feature_idx * n_clusters + 
+                            size_t offset = feature_idx * n_clusters +
                                     cluster_idx;
                             size_t step = n_features * n_clusters;
                             for(size_t copy_idx = 0; copy_idx < n_centroids_private_copies; ++copy_idx) {
@@ -172,14 +172,14 @@ compute_threshold_kernel(
 )
 {
     if (n_empty_clusters == 1) {
-        sycl::event res_ev = 
+        sycl::event res_ev =
             q.submit([&](sycl::handler &cgh) {
                 cgh.depends_on(depends);
                 sycl::property_list prop( {sycl::property::reduction::initialize_to_identity{}} );
                 auto maxReduction = sycl::reduction(threshold, sycl::maximum<dataT>(), prop);
                 cgh.parallel_for(
-                    sycl::range<1>(n_samples), 
-                    maxReduction, 
+                    sycl::range<1>(n_samples),
+                    maxReduction,
                     [=] (sycl::id<1> wid, auto &max) {
                         max.combine(data[wid]);
                     }
@@ -189,7 +189,7 @@ compute_threshold_kernel(
     } else {
         dataT *temp_output = sycl::malloc_device<dataT>(n_samples, q);
 
-        sycl::event sort_ev = 
+        sycl::event sort_ev =
             iterative_merge_sort(q, data, temp_output, n_samples, depends);
 
         sycl::event copy_ev = q.copy<dataT>(temp_output + n_samples - n_empty_clusters, threshold, 1, {sort_ev});
@@ -212,8 +212,8 @@ template <typename dataT, typename indT>
 sycl::event
 select_samples_far_from_centroid_kernel(
     sycl::queue q,
-    size_t n_empty_clusters, 
-    size_t n_samples, 
+    size_t n_empty_clusters,
+    size_t n_samples,
     size_t work_group_size,
     //
     dataT const *distance_to_centroid, // IN (n_samples,)
@@ -223,7 +223,7 @@ select_samples_far_from_centroid_kernel(
     indT *n_selected_eq_threshold,     // OUT (1,)
     const std::vector<sycl::event> &depends = {}
 ) {
-    /* 
+    /*
     This kernel writes in selected_samples_idx the idx of the top n_selected
     items in distance_to_centroid with highest values.
 
@@ -239,7 +239,7 @@ select_samples_far_from_centroid_kernel(
     of the selected_samples_idx array.
     */
 
-    sycl::event res_ev = 
+    sycl::event res_ev =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
@@ -247,7 +247,7 @@ select_samples_far_from_centroid_kernel(
                 {n_samples},
                 [=](sycl::id<1> wid) {
                     size_t sample_idx = wid[0];
-                    if (sample_idx >= n_samples) 
+                    if (sample_idx >= n_samples)
                         return;
 
                     indT n_selected_gt_threshold_ = n_selected_gt_threshold[0];
@@ -265,9 +265,9 @@ select_samples_far_from_centroid_kernel(
                     if (distance_to_centroid_ < threshold_) {
                         return;
                     } else if(distance_to_centroid_ > threshold_) {
-                        auto atomic_n_selected_gt_threshold = 
+                        auto atomic_n_selected_gt_threshold =
                         sycl::atomic_ref<
-                            indT, 
+                            indT,
                             sycl::memory_order::relaxed,
                             sycl::memory_scope::device,
                             sycl::access::address_space::global_space>(n_selected_gt_threshold[0]);
@@ -276,12 +276,12 @@ select_samples_far_from_centroid_kernel(
 
                         return;
                     } else {
-                        if (n_selected_eq_threshold_ >= max_n_selected_eq_threshold) 
+                        if (n_selected_eq_threshold_ >= max_n_selected_eq_threshold)
                             return;
 
-                        auto atomic_n_selected_eq_threshold = 
+                        auto atomic_n_selected_eq_threshold =
                         sycl::atomic_ref<
-                            indT, 
+                            indT,
                             sycl::memory_order::relaxed,
                             sycl::memory_scope::device,
                             sycl::access::address_space::global_space>(n_selected_eq_threshold[0]);
@@ -300,7 +300,7 @@ template <typename dataT, typename indT>
 class relocate_empty_clusters_krn;
 
 template <typename dataT, typename indT>
-sycl::event 
+sycl::event
 relocate_empty_clusters_kernel(
     sycl::queue q,
     size_t n_samples,
@@ -316,12 +316,12 @@ relocate_empty_clusters_kernel(
     indT const *samples_far_from_center,  // IN  (n_samples, )
     indT const *empty_clusters_list,   // IN  (n_clusters, )
     dataT *per_sample_inertia,         // INOUT (n_samples,)
-    dataT *centroids_t,                // INOUT (n_features, n_clusters,)  
+    dataT *centroids_t,                // INOUT (n_features, n_clusters,)
     dataT *cluster_sizes,              // INOUT (n_clusters,)
     const std::vector<sycl::event> &depends = {}
-) 
+)
 {
-    sycl::event res_ev = 
+    sycl::event res_ev =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
@@ -345,13 +345,13 @@ relocate_empty_clusters_kernel(
                     indT new_location_X_idx = samples_far_from_center[n_selected_gt_threshold_ - relocated_idx];
                     indT new_location_previous_assignment = assignment_id[new_location_X_idx];
 
-                    dataT new_centroid_value = X_t[feature_idx * n_clusters + new_location_X_idx];
+                    dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_X_idx];
                     dataT new_location_weight = sample_weight[new_location_X_idx];
                     dataT X_centroid_addend = new_centroid_value * new_location_weight;
 
-                    auto atomic_centroid_component_ref = 
+                    auto atomic_centroid_component_ref =
                     sycl::atomic_ref<
-                            dataT, 
+                            dataT,
                             sycl::memory_order::relaxed,
                             sycl::memory_scope::device,
                             sycl::access::address_space::global_space>(centroids_t[feature_idx * n_clusters + new_location_previous_assignment]);
@@ -361,9 +361,9 @@ relocate_empty_clusters_kernel(
 
                     if (feature_idx == 0) {
                         per_sample_inertia[new_location_X_idx] = dataT(0);
-                        auto atomic_cluster_size_ref = 
+                        auto atomic_cluster_size_ref =
                         sycl::atomic_ref<
-                                dataT, 
+                                dataT,
                                 sycl::memory_order::relaxed,
                                 sycl::memory_scope::device,
                                 sycl::access::address_space::global_space>(cluster_sizes[new_location_previous_assignment]);
@@ -378,11 +378,11 @@ relocate_empty_clusters_kernel(
 }
 
 template <typename dataT, typename indT>
-sycl::event 
+sycl::event
 relocate_empty_clusters(
     sycl::queue q,
-    size_t n_samples, 
-    size_t n_features, 
+    size_t n_samples,
+    size_t n_features,
     size_t n_clusters,
     size_t work_group_size,
     //
@@ -402,7 +402,7 @@ relocate_empty_clusters(
     // compute threshold = kth largest element in sq_dist_to_nearest_centroid
     dataT *threshold = sycl::malloc_device<dataT>(1, q);
 
-    sycl::event compute_threshold_ev = 
+    sycl::event compute_threshold_ev =
         compute_threshold_kernel(q, n_samples, sq_dist_to_nearest_centroid, n_empty_clusters, threshold, depends);
 
     indT *samples_far_from_center = sycl::malloc_device<indT>(n_samples + 2, q);
@@ -414,7 +414,7 @@ relocate_empty_clusters(
     indT zero_one[2] = {0, 1};
     sycl::event n_selected_pop_ev = q.copy<indT>(&zero_one[0], n_selected, 2);
 
-    sycl::event select_samples_far_from_centroid_ev = 
+    sycl::event select_samples_far_from_centroid_ev =
         select_samples_far_from_centroid_kernel<dataT, indT>(
             q,
             n_empty_clusters, n_samples, work_group_size,
@@ -427,7 +427,7 @@ relocate_empty_clusters(
             {compute_threshold_ev, n_selected_pop_ev}
         );
 
-    sycl::event relocate_empty_cluster_ev = 
+    sycl::event relocate_empty_cluster_ev =
         relocate_empty_clusters_kernel<dataT, indT>(
             q,
             n_samples,
@@ -443,18 +443,18 @@ relocate_empty_clusters(
             samples_far_from_center,             // IN  (n_samples, )
             empty_clusters_list,                 // IN  (n_clusters, )
             per_sample_inertia,                  // INOUT (n_samples,)
-            centroids_t,                         // INOUT (n_features, n_clusters,)  
+            centroids_t,                         // INOUT (n_features, n_clusters,)
             cluster_sizes,                       // INOUT (n_clusters,)
-            {select_samples_far_from_centroid_ev}  
+            {select_samples_far_from_centroid_ev}
         );
-    
-    // submit a host task to free temp USM-device allocation 
+
+    // submit a host task to free temp USM-device allocation
     q.submit([&](sycl::handler &cgh) {
         cgh.depends_on(relocate_empty_cluster_ev);
         auto ctx = q.get_context();
 
-        cgh.host_task([ctx, samples_far_from_center, threshold]() { 
-            sycl::free(samples_far_from_center, ctx); 
+        cgh.host_task([ctx, samples_far_from_center, threshold]() {
+            sycl::free(samples_far_from_center, ctx);
             sycl::free(threshold, ctx);
         });
     });
@@ -469,16 +469,16 @@ template <typename dataT>
 sycl::event
 compute_centroid_shifts_squared_kernel(
     sycl::queue q,
-    size_t n_features, 
-    size_t n_clusters, 
+    size_t n_features,
+    size_t n_clusters,
     size_t work_group_size,
     //
     dataT const *centroids_t,     // IN
     dataT const *new_centroids_t, // IN
-    dataT *centroid_shifts,       // OUT 
+    dataT *centroid_shifts,       // OUT
     const std::vector<sycl::event> &depends = {}
 ) {
-    sycl::event res_ev = 
+    sycl::event res_ev =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
