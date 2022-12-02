@@ -404,7 +404,7 @@ py_relocate_empty_clusters(
   dpctl::tensor::usm_ndarray assignment_id,   // IN (n_samples, )              indT
   dpctl::tensor::usm_ndarray empty_clusters_list, // IN (n_clusters)           indT
   dpctl::tensor::usm_ndarray sq_dist_to_nearest_centroid, // IN (n_samples,)   dataT
-  dpctl::tensor::usm_ndarray centroid_t,      // IN-OUT  (n_features, n_samples, )  dataT
+  dpctl::tensor::usm_ndarray centroid_t,      // IN-OUT  (n_features, n_clusters, )  dataT
   dpctl::tensor::usm_ndarray cluster_sizes,   // IN-OUT  (n_clusters, )        dataT
   dpctl::tensor::usm_ndarray per_sample_inertia, // IN-OUT (n_samples, )       dataT
   sycl::queue q,
@@ -435,11 +435,13 @@ py_relocate_empty_clusters(
   py::ssize_t n_features = X_t.get_shape(0);
   py::ssize_t n_clusters = empty_clusters_list.get_shape(0);
 
-  if (n_samples != sample_weights.get_shape(0) || n_samples != assignment_id.get_shape(0) || 
-    n_samples != sq_dist_to_nearest_centroid.get_shape(0) ||
-    n_samples != centroid_t.get_shape(1) || 
-    n_features != centroid_t.get_shape(0) || n_clusters != cluster_sizes.get_shape(0) ||
-    n_samples != per_sample_inertia.get_shape(0)
+  if (n_samples != sample_weights.get_shape(0)              ||
+      n_samples != assignment_id.get_shape(0)               ||
+      n_samples != sq_dist_to_nearest_centroid.get_shape(0) ||
+      n_clusters != centroid_t.get_shape(1)                 ||
+      n_features != centroid_t.get_shape(0)                 ||
+      n_clusters != cluster_sizes.get_shape(0)              ||
+      n_samples != per_sample_inertia.get_shape(0)
   ) 
   {
     throw py::value_error("Input dimensions are inconsistent");
@@ -601,7 +603,7 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
     py::arg("assignment_id"),       // IN (n_samples, )                 indT
     py::arg("empty_clusters_list"), // IN (n_clusters, )                indT
     py::arg("sq_dist_to_nearest_centroid"), // IN (n_samples, )         dataT
-    py::arg("centroid_t"),          // INTOUT (n_features, n_samples,)  dataT
+    py::arg("centroid_t"),          // INTOUT (n_features, n_clusters,) dataT
     py::arg("cluster_sizes"),       // INOUT  (n_clusters, )            dataT
     py::arg("per_sample_inertia"),  // INOUT  (n_samples,)              dataT
     py::arg("sycl_queue"),
