@@ -232,10 +232,12 @@ iterative_merge_sort(
                 using Comparer = std::less<T>;
                 using Sorter = 
                     sycl::ext::oneapi::experimental::default_sorter<Comparer>;
+		
                 // calculate required local memory size
+		// MUST pass range object, not an integer.
                 size_t temp_memory_size =
                     Sorter::template memory_required<T>(
-                        sycl::memory_scope::work_group, lws);
+                        sycl::memory_scope::work_group, local_range);
 
                 sycl::accessor<
                     std::byte, 1, sycl::access::mode::read_write,
