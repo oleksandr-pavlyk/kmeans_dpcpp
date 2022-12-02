@@ -340,9 +340,10 @@ relocate_empty_clusters_kernel(
 
                     if (feature_idx >= n_features) return;
 
-                    indT n_selected_gt_threshold_ = n_selected_gt_threshold[0] - 1;
                     indT relocated_cluster_idx = empty_clusters_list[relocated_idx];
-                    indT new_location_X_idx = samples_far_from_center[n_selected_gt_threshold_ - relocated_idx];
+                    indT n_selected_gt_threshold_ = n_selected_gt_threshold[0];
+		    size_t index = (n_selected_gt_threshold_ == 0) ? (n_samples - 1) : (n_selected_gt_threshold_ - 1 - relocated_idx);
+                    indT new_location_X_idx = samples_far_from_center[index];
                     indT new_location_previous_assignment = assignment_id[new_location_X_idx];
 
                     dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_X_idx];
@@ -426,6 +427,10 @@ relocate_empty_clusters(
             n_selected_eq_threshold,     // OUT (1,)
             {compute_threshold_ev, n_selected_pop_ev}
         );
+
+    // FIXME: not clear why this synchronization point is needed, but the
+    // test_relocate_empty_clusters fails without it
+    select_samples_far_from_centroid_ev.wait();
 
     sycl::event relocate_empty_cluster_ev =
         relocate_empty_clusters_kernel<dataT, indT>(

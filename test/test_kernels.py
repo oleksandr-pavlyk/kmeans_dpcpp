@@ -17,7 +17,7 @@ def test_broadcast_divide():
     tol = np.finfo(X.dtype).resolution
     assert np.allclose( X_np, X_expected, rtol=tol )
 
-    
+
 def test_half_l2_norm_squared():
     X1 = dpt.ones((3, 2), dtype='f4')
     X2 = dpt.full((3, 4), 2., dtype='f4')
@@ -75,7 +75,7 @@ def test_reduce_centroids_data():
     assert np.allclose(
         dpt.asnumpy(out_cluster_sizes), dpt.asnumpy(cluster_sizes_private_copies).sum(axis=0))
 
-    
+
 def test_reduce_centroids_data_empty():
     n_copies = 3
     n_features = 2
@@ -160,7 +160,7 @@ def test_select_samples_far_from_centroid_kernel():
     # and indices of distances equal to threshold at the end of the selected_samples_idx
     ht_ev2, _ = kdp.select_samples_far_from_centroid(
         n_empty_clusters, distance_to_centroid, threshold,
-        selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold, 
+        selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold,
         sycl_queue=q,
         depends=[c_ev]
     )
@@ -173,9 +173,9 @@ def test_select_samples_far_from_centroid_kernel():
     assert np.all(Xnp[dpt.asnumpy(selected_samples_idx[1-int(n_selected_eq_threshold):])] == float(threshold))
 
 
-def test_relocate_empty_cluster():
+def test_relocate_empty_clusters():
     dataT = np.float32
-    indT = np.uint32
+    indT = np.int32
     n = 8
 
     # 2 clusters, 8 3D points, uniform samples
@@ -191,9 +191,8 @@ def test_relocate_empty_cluster():
         ], dtype=dataT)
     Xnp_t = np.ascontiguousarray(Xnp.T)
 
-    Cnp = np.array([[0.1, -0.1, 0.1], [5, 5, 5]], dtype=dataT)
+    Cnp = np.array([[0.11, -0.1, 0.09], [5, 5, 5]], dtype=dataT)
     Cnp_t = np.ascontiguousarray(Cnp.T)
-
 
     sample_weights = dpt.ones(n, dtype=dataT)
     X_t = dpt.asarray(Xnp_t, dtype=dataT)
@@ -218,10 +217,13 @@ def test_relocate_empty_cluster():
     ht.wait()
 
     # centroid_t, cluster_sizes, per_sample_ineria change
-    expected_updated_centroid_t = np.array([[0.1, -1], [-0.1, -1], [0.1, -1]], dtype=dataT)
+    #### N.B.: Furtherst point from [.1, -.1, .1] is [-1, 1, -1] (Xnp[5]) so this should
+    #### be new centroid chosen instead of [5,5,5]
+    expected_updated_centroid_t = np.array([[0.11 + 1, -1], [-0.1 -1, 1], [0.09 + 1, -1]], dtype=dataT)
     expected_cluster_sizes = np.array([7, 1], dtype=dataT)
-    expected_per_sample_inertia = np.zeros(n, dtype=dataT)
+    expected_per_sample_inertia = np.copy(sq_dist_to_nearest_centroid_np)
+    expected_per_sample_inertia[5] = 0
 
-    assert np.allclose(expected_updated_centroid_t, dpt.asnumpy(centroid_t), rtol=np.finfo(dataT).resolution)
     assert np.allclose(expected_cluster_sizes, dpt.asnumpy(cluster_sizes), rtol=np.finfo(dataT).resolution)
+    assert np.allclose(expected_updated_centroid_t, dpt.asnumpy(centroid_t), rtol=np.finfo(dataT).resolution)
     assert np.allclose(expected_per_sample_inertia, dpt.asnumpy(per_sample_inertia), rtol=np.finfo(dataT).resolution)
