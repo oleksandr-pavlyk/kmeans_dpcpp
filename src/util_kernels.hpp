@@ -345,7 +345,7 @@ relocate_empty_clusters_kernel(
                     indT new_location_X_idx = samples_far_from_center[n_selected_gt_threshold_ - relocated_idx];
                     indT new_location_previous_assignment = assignment_id[new_location_X_idx];
 
-                    dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_X_idx];
+                    dataT new_centroid_value = X_t[feature_idx * n_clusters + new_location_X_idx];
                     dataT new_location_weight = sample_weight[new_location_X_idx];
                     dataT X_centroid_addend = new_centroid_value * new_location_weight;
 
