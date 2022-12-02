@@ -447,6 +447,17 @@ relocate_empty_clusters(
             cluster_sizes,                       // INOUT (n_clusters,)
             {select_samples_far_from_centroid_ev}  
         );
+    
+    // submit a host task to free temp USM-device allocation 
+    q.submit([&](sycl::handler &cgh) {
+        cgh.depends_on(relocate_empty_cluster_ev);
+        auto ctx = q.get_context();
+
+        cgh.host_task([ctx, samples_far_from_center, threshold]() { 
+            sycl::free(samples_far_from_center, ctx); 
+            sycl::free(threshold, ctx);
+        });
+    });
 
     return relocate_empty_cluster_ev;
 }
