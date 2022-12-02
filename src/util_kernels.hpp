@@ -325,9 +325,9 @@ relocate_empty_clusters_kernel(
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
-            size_t n_work_groups_for_cluster = quotient_ceil(n_clusters, work_group_size);
+            size_t n_work_groups_for_cluster = quotient_ceil(n_features, work_group_size);
             size_t n_work_items_for_cluster = n_work_groups_for_cluster * work_group_size;
-            size_t global_size = n_work_items_for_cluster * n_features;
+            size_t global_size = n_work_items_for_cluster * n_relocated_clusters;
 
             cgh.parallel_for<class relocate_empty_clusters_krn<dataT, indT>>(
                 sycl::nd_range<1>({global_size}, {work_group_size}),
@@ -412,7 +412,7 @@ relocate_empty_clusters(
     indT *n_selected_eq_threshold = n_selected + 1;
 
     indT zero_one[2] = {0, 1};
-    sycl::event n_selected_pop_ev = q.copy<indT>(&zero_one[0], n_selected, {2});
+    sycl::event n_selected_pop_ev = q.copy<indT>(&zero_one[0], n_selected, 2);
 
     sycl::event select_samples_far_from_centroid_ev = 
         select_samples_far_from_centroid_kernel<dataT, indT>(
