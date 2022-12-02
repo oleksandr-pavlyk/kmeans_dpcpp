@@ -327,7 +327,7 @@ relocate_empty_clusters_kernel(
 
             size_t n_work_groups_for_cluster = quotient_ceil(n_features, work_group_size);
             size_t n_work_items_for_cluster = n_work_groups_for_cluster * work_group_size;
-            size_t global_size = n_work_items_for_cluster * n_relocated_clusters;
+            size_t global_size = n_work_items_for_cluster * n_empty_clusters;
 
             cgh.parallel_for<class relocate_empty_clusters_krn<dataT, indT>>(
                 sycl::nd_range<1>({global_size}, {work_group_size}),
