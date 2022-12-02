@@ -413,7 +413,3 @@ size_t driver_lloyd(
 
     return n_iterations;
 }
-
-int main(void) {
-
-}
