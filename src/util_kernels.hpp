@@ -307,7 +307,7 @@ relocate_empty_clusters_kernel(
     size_t n_features,
     size_t n_clusters,
     size_t n_empty_clusters,
-    indT *n_selected_gt_threshold,   // USM pointer
+    indT const *n_selected_gt_threshold,   // USM pointer
     size_t work_group_size,
     //
     dataT const *X_t,                  // IN, READ ONLY (n_features, n_samples,)
@@ -321,6 +321,9 @@ relocate_empty_clusters_kernel(
     const std::vector<sycl::event> &depends = {}
 )
 {
+    // Alternative way to fix failure of test_relocate_empty_clusters
+    // sycl::event::wait(depends); 
+
     sycl::event res_ev =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
@@ -328,6 +331,11 @@ relocate_empty_clusters_kernel(
             size_t n_work_groups_for_cluster = quotient_ceil(n_features, work_group_size);
             size_t n_work_items_for_cluster = n_work_groups_for_cluster * work_group_size;
             size_t global_size = n_work_items_for_cluster * n_empty_clusters;
+
+            // FIXME: without this unused stream instance the test_relocate_empty_clusters
+            // fails. Another way of fixing the failure is to use sycl::event::wait(depends)
+            // before q.submit call.
+            sycl::stream out(16, 8, cgh);
 
             cgh.parallel_for<class relocate_empty_clusters_krn<dataT, indT>>(
                 sycl::nd_range<1>({global_size}, {work_group_size}),
@@ -342,7 +350,8 @@ relocate_empty_clusters_kernel(
 
                     indT relocated_cluster_idx = empty_clusters_list[relocated_idx];
                     indT n_selected_gt_threshold_ = n_selected_gt_threshold[0];
-		    size_t index = (n_selected_gt_threshold_ == 0) ? (n_samples - 1) : (n_selected_gt_threshold_ - 1 - relocated_idx);
+
+		            size_t index = (n_selected_gt_threshold_ == 0) ? (n_samples - 1) : (n_selected_gt_threshold_ - 1 - relocated_idx);
                     indT new_location_X_idx = samples_far_from_center[index];
                     indT new_location_previous_assignment = assignment_id[new_location_X_idx];
 
@@ -427,10 +436,6 @@ relocate_empty_clusters(
             n_selected_eq_threshold,     // OUT (1,)
             {compute_threshold_ev, n_selected_pop_ev}
         );
-
-    // FIXME: not clear why this synchronization point is needed, but the
-    // test_relocate_empty_clusters fails without it
-    select_samples_far_from_centroid_ev.wait();
 
     sycl::event relocate_empty_cluster_ev =
         relocate_empty_clusters_kernel<dataT, indT>(
