@@ -483,9 +483,9 @@ compute_centroid_shifts_squared_kernel(
     size_t n_clusters,
     size_t work_group_size,
     //
-    dataT const *centroids_t,     // IN
-    dataT const *new_centroids_t, // IN
-    dataT *centroid_shifts,       // OUT
+    dataT const *centroids_t,     // IN   (n_features, n_clusters,)
+    dataT const *new_centroids_t, // IN   (n_features, n_clusters,)
+    dataT *centroid_shifts,       // OUT  (n_clusters, )
     const std::vector<sycl::event> &depends = {}
 ) {
     sycl::event res_ev =

@@ -5,6 +5,7 @@ from ._kmeans_dpcpp import (
     compute_threshold,
     select_samples_far_from_centroid,
     relocate_empty_clusters,
+    compute_centroid_shifts_squared,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "compute_threshold",
     "select_samples_far_from_centroid",
     "relocate_empty_clusters",
+    "compute_centroid_shifts_squared",
 ]

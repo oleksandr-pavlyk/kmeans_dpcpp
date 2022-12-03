@@ -549,6 +549,81 @@ py_relocate_empty_clusters(
   return std::make_pair(ht_ev, comp_ev);
 }
 
+std::pair<sycl::event, sycl::event>
+py_compute_centroid_shifts_squared_kernel(
+  dpctl::tensor::usm_ndarray old_centroid_t,    // IN (n_features, n_clusters)
+  dpctl::tensor::usm_ndarray new_centroid_t,    // IN (n_features, n_clusters)
+  dpctl::tensor::usm_ndarray centroid_shifts,   // OUT (n_clusters)
+  sycl::queue q,
+  const std::vector<sycl::event> &depends={}
+) {
+  if (2 != new_centroid_t.get_ndim() || 
+      2 != old_centroid_t.get_ndim() || 
+      1 != centroid_shifts.get_ndim()
+  ) {
+    throw py::value_error("Input dimensionalities are not consistent.");
+  }
+
+  py::ssize_t n_features = old_centroid_t.get_shape(0);
+  py::ssize_t n_clusters = old_centroid_t.get_shape(1);
+
+  if (n_features != new_centroid_t.get_shape(0) ||
+      n_clusters != new_centroid_t.get_shape(1) ||
+      n_clusters != centroid_shifts.get_shape(0)
+  ) {
+    throw py::value_error("Array dimensions are not consistent.");
+  }
+
+  if ( !new_centroid_t.is_c_contiguous() || !old_centroid_t.is_c_contiguous() || !centroid_shifts.is_c_contiguous() ) {
+    throw py::value_error("Arguments must be C-contiguous arrays");
+  }
+
+  if (!dpctl::utils::queues_are_compatible(q, {new_centroid_t.get_queue(), old_centroid_t.get_queue(), centroid_shifts.get_queue()})) {
+    throw py::value_error("Execution queue is not compatible with allocation queues");
+  }
+
+  int typenum = old_centroid_t.get_typenum();
+  if (typenum != new_centroid_t.get_typenum() || typenum != centroid_shifts.get_typenum()) {
+    throw py::value_error("All array arguments must have the same elemental data types");
+  }
+
+  auto &api = ::dpctl::detail::dpctl_capi::get();
+  size_t work_group_size = 128;
+
+  sycl::event comp_ev;
+  if (typenum == api.UAR_FLOAT_ ) {
+    using dataT = float;
+
+    comp_ev = compute_centroid_shifts_squared_kernel<dataT>(
+      q, n_features, n_clusters, work_group_size, 
+      old_centroid_t.get_data<dataT>(),
+      new_centroid_t.get_data<dataT>(),
+      centroid_shifts.get_data<dataT>(),
+      depends
+    );
+  } else if (typenum == api.UAR_DOUBLE_) {
+    using dataT = double;
+
+    comp_ev = compute_centroid_shifts_squared_kernel<dataT>(
+      q, n_features, n_clusters, work_group_size, 
+      old_centroid_t.get_data<dataT>(),
+      new_centroid_t.get_data<dataT>(),
+      centroid_shifts.get_data<dataT>(),
+      depends
+    );
+
+  } else {
+    throw py::value_error("Unsupported elemental data type.");
+  }
+
+  sycl::event ht_ev = dpctl::utils::keep_args_alive(
+    q, 
+    {old_centroid_t, new_centroid_t, centroid_shifts}, {comp_ev}
+  );
+
+  return std::make_pair(ht_ev, comp_ev);
+}
+
 PYBIND11_MODULE(_kmeans_dpcpp, m) {
   m.def(
     "broadcast_divide", &py_broadcast_divide,
@@ -606,6 +681,16 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
     py::arg("centroid_t"),          // INTOUT (n_features, n_clusters,) dataT
     py::arg("cluster_sizes"),       // INOUT  (n_clusters, )            dataT
     py::arg("per_sample_inertia"),  // INOUT  (n_samples,)              dataT
+    py::arg("sycl_queue"),
+    py::arg("depends") = py::list()
+  );
+
+  m.def(
+    "compute_centroid_shifts_squared", &py_compute_centroid_shifts_squared_kernel,
+    "",
+    py::arg("centroid_t"),          // IN (n_features, n_clusters, )
+    py::arg("new_centroid_t"),      // IN (n_features, n_clusters, )
+    py::arg("out_centroid_shifts"), // OUT (n_clusters)
     py::arg("sycl_queue"),
     py::arg("depends") = py::list()
   );

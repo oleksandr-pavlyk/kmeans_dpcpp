@@ -227,3 +227,23 @@ def test_relocate_empty_clusters():
     assert np.allclose(expected_cluster_sizes, dpt.asnumpy(cluster_sizes), rtol=np.finfo(dataT).resolution)
     assert np.allclose(expected_updated_centroid_t, dpt.asnumpy(centroid_t), rtol=np.finfo(dataT).resolution)
     assert np.allclose(expected_per_sample_inertia, dpt.asnumpy(per_sample_inertia), rtol=np.finfo(dataT).resolution)
+
+
+def test_centroid_shifts():
+    dataT = np.float32
+    X1_t = dpt.asarray([[1,-5], [2,-4], [3, -3], [4,-2], [5, -1]], dtype=dataT)
+    X2_t = dpt.asarray([[2,-4],[3,-3], [4,-2], [5,-1], [6,1]], dtype=dataT)
+
+    cs = dpt.empty((X1_t.shape[1],), dtype=dataT)
+
+    q = X1_t.sycl_queue
+
+    ht, _ = kdp.compute_centroid_shifts_squared(
+        X1_t, X2_t, cs, sycl_queue=q)
+    ht.wait()
+
+    assert np.allclose(
+        dpt.asnumpy(cs),
+        np.array([5, 8], dtype=dataT),
+        rtol = np.finfo(dataT).resolution
+    )
