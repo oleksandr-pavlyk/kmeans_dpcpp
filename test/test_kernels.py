@@ -331,3 +331,49 @@ def test_assignment():
 
     assert np.array_equal(expected_ids, dpt.asnumpy(assigned_id))
 
+
+def test_compute_inertia():
+    dataT = np.float32
+    indT = np.int32
+    cloud_size = 32
+
+    ps = np.array([
+        [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
+    ], dtype=dataT)
+    Xnp = np.concatenate([
+        np.random.normal(0, 0.1, size=(cloud_size,3)).astype(dataT) + p for p in ps
+    ], axis=0)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+    Cnt = np.ascontiguousarray(ps.T)
+
+    Xt = dpt.asarray(Xnp_t, dtype=dataT)
+    n_samples = Xt.shape[1]
+    n_clusters = ps.shape[0]
+    assert Xt.flags.c_contiguous
+    centroid_t = dpt.asarray(Cnt, dtype=dataT)
+    assert centroid_t.flags.c_contiguous
+
+    _ids = np.repeat(np.arange(n_clusters, dtype=indT), cloud_size)
+    assignment_id = dpt.asarray(_ids)
+    sample_weight = dpt.ones(n_samples, dtype=dataT)
+    per_sample_inertia = dpt.empty(n_samples, dtype=dataT)
+
+    q = Xt.sycl_queue
+
+    ht, _ = kdp.compute_inertia(
+        Xt, sample_weight, centroid_t, assignment_id, per_sample_inertia,
+        work_group_size=256,
+        sycl_queue=q
+    )
+    ht.wait()
+
+    assert Xnp_t.shape[1] == _ids.shape[0]
+    expected_per_sample_inertia = \
+        np.sum(np.square(Xnp_t - np.take_along_axis(Cnt, _ids[np.newaxis,:], axis=1)), axis=0)
+
+    assert np.allclose(
+        expected_per_sample_inertia, 
+        dpt.asnumpy(per_sample_inertia), 
+        rtol=np.finfo(dataT).resolution
+    )
+

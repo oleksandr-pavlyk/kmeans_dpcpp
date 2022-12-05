@@ -5,10 +5,10 @@
 #include <vector>
 #include "quotients_utils.hpp"
 
-template <typename T>
+template <typename T, typename indT>
 class compute_interia_krn;
 
-template <typename T>
+template <typename T, typename indT>
 sycl::event
 compute_inertia_kernel(
     sycl::queue q,
@@ -17,11 +17,11 @@ compute_inertia_kernel(
     size_t n_clusters,
     size_t work_group_size,
     // ======================
-    const T *X_t,                      // (n_features, n_samples)
-    const T *sample_weights,           // (n_features, )
-    const T *centroids_t,              // (n_features, n_clusters)
-    const size_t *assignments_idx,     // (n_samples, )
-    T *per_sample_inertia,             // (n_samples, )
+    const T *X_t,                    // (n_features, n_samples)
+    const T *sample_weights,         // (n_features, )
+    const T *centroids_t,            // (n_features, n_clusters)
+    const indT *assignments_idx,     // (n_samples, )
+    T *per_sample_inertia,           // (n_samples, )
     const std::vector<sycl::event> &depends={}
 ) {
     sycl::event e = 
@@ -31,7 +31,7 @@ compute_inertia_kernel(
             auto G = sycl::range<1>(quotient_ceil(n_samples, work_group_size) * work_group_size);
             auto L = sycl::range<1>(work_group_size);
 
-            cgh.parallel_for<class compute_interia_krn<T>>(
+            cgh.parallel_for<class compute_interia_krn<T, indT>>(
                 sycl::nd_range<1>(G, L),
                 [=](sycl::nd_item<1> it) {
                     size_t sample_idx = it.get_global_id(0);
