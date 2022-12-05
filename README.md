@@ -16,5 +16,5 @@ CXX=icpx python setup.py develop -- -DDPCTL_MODULE_PATH=$(python -m dpctl --cmak
 ## Running tests
 
 ```bash
-python -m pytest -s test/
+python -m pytest -s tests/
 ```
