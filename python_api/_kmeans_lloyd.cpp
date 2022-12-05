@@ -917,6 +917,43 @@ py_compute_inertia(
   return std::make_pair(ht_ev, comp_ev);
 }
 
+py::object
+py_reduce_vector_blocking(
+  dpctl::tensor::usm_ndarray data,
+  sycl::queue q,
+  const std::vector<sycl::event> &depends={}
+) {
+
+  if (!is_1d(data) || !all_c_contiguous({data})) {
+    throw py::value_error("Expecting 1D contiguous vector.");
+  }
+
+  if (!dpctl::utils::queues_are_compatible(q, {data.get_queue()})) {
+    throw py::value_error("Execution queue is not compatible with allocation queues");
+  }
+
+  py::ssize_t n_samples = data.get_shape(0);
+
+  int typenum = data.get_typenum();
+  const auto &api = dpctl::detail::dpctl_capi::get();
+
+  if (typenum == api.UAR_FLOAT_) {
+    using dataT = float;
+
+    dataT res = reduce_vector_kernel_blocking<dataT>(q, n_samples, data.get_data<dataT>(), depends);
+    return py::cast(res);
+
+  } else if (typenum == api.UAR_DOUBLE_) {
+    using dataT = double;
+
+    dataT res = reduce_vector_kernel_blocking<dataT>(q, n_samples, data.get_data<dataT>(), depends);
+    return py::cast(res);
+
+  } else {
+    throw py::value_error("Unsupported data type");
+  }
+}
+
 PYBIND11_MODULE(_kmeans_dpcpp, m) {
   m.def(
     "broadcast_divide", &py_broadcast_divide,
@@ -1029,5 +1066,11 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
     py::arg("work_group_size"),
     py::arg("sycl_queue"),
     py::arg("depends") = py::list()
+  );
+
+  m.def(
+    "reduce_vector_blocking", &py_reduce_vector_blocking,
+    "Synchronously compute the total value of elements in the vector",
+    py::arg("data"), py::arg("sycl_queue"), py::arg("depends") = py::list()
   );
 }

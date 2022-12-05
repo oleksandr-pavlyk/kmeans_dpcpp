@@ -98,6 +98,8 @@ compute_uniform_weight_inertia_kernel(
     return e;
 }
 
+template <typename T>
+class reduce_vector_blocking_krn;
 
 template <typename T>
 T reduce_vector_kernel_blocking(
@@ -114,8 +116,8 @@ T reduce_vector_kernel_blocking(
             sycl::property_list prop( {sycl::property::reduction::initialize_to_identity{}} );
             auto sumReduction = sycl::reduction(dev_total, sycl::plus<T>(), prop);
 
-            cgh.parallel_for(
-                {n_samples}, 
+            cgh.parallel_for<class reduce_vector_blocking_krn<T>>(
+                sycl::range<1>(n_samples), 
                 sumReduction,
                 [=](sycl::id<1> idx, auto &sum) {
                     sum += data[idx];

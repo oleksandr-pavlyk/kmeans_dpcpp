@@ -377,3 +377,12 @@ def test_compute_inertia():
         rtol=np.finfo(dataT).resolution
     )
 
+
+def test_reduce_vector_blocking():
+    dataT = dpt.float32
+    vec = dpt.arange(100, dtype=dataT)
+
+    q = vec.sycl_queue
+    res = kdp.reduce_vector_blocking(vec, sycl_queue=q)
+
+    assert res == 50 * 99  # sum(k, 0 <= k < 100) == 100 * 99 / 2

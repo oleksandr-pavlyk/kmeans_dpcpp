@@ -9,6 +9,7 @@ from ._kmeans_dpcpp import (
     compute_centroid_to_sample_distances,
     assignment,
     compute_inertia,
+    reduce_vector_blocking,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "compute_centroid_to_sample_distances",
     "assignment",
     "compute_inertia",
+    "reduce_vector_blocking",
 ]
