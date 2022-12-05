@@ -5,10 +5,10 @@
 #include <vector>
 #include "quotients_utils.hpp"
 
-template <typename T, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
+template <typename T, typename indT, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
 class assignment_krn;
 
-template <typename T, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
+template <typename T, typename indT, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
 sycl::event
 assignment(
     sycl::queue q,
@@ -21,7 +21,7 @@ assignment(
     const T* X_t,                    // IN READ-ONLY   (n_features, n_samples, )
     const T* centroids_t,            // IN READ-ONLY   (n_features, n_clusters, )
     const T *centroids_half_l2_norm, // IN             (n_clusters, )
-    size_t *assignment_idx,          // OUT            (n_samples, )
+    indT *assignment_idx,          // OUT            (n_samples, )
     const std::vector<sycl::event> &depends={}
 ) {
 
@@ -47,7 +47,7 @@ assignment(
             using slm_l2hnT = sycl::accessor<T, 1, sycl::access::mode::read_write, sycl::access::target::local>;
             slm_l2hnT window_of_centroids_half_l2_norms(sycl::range<1>(window_n_centroids), cgh);
 
-            cgh.parallel_for<class assignment_krn<T, preferred_work_group_size_multiple, centroids_window_width_multiplier>>(
+            cgh.parallel_for<class assignment_krn<T, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier>>(
                 sycl::nd_range<1>(G, L),
                 [=](sycl::nd_item<1> it) {
                     size_t sample_idx = it.get_global_id(0);
@@ -118,20 +118,20 @@ assignment(
                             first_feature_idx += centroids_window_height;
                         }
 
-                        auto closest = _update_closest_centroid(
+                        auto closest = _update_closest_centroid<T, decltype(window_of_centroids_half_l2_norms)>(
                             window_n_centroids,
                             // =================
                             first_centroid_idx,
                             min_idx,
                             min_sample_pseudo_inertia,
                             window_of_centroids_half_l2_norms,
-                            dot_products
+                            dot_products.data()
                         );
 
                         it.barrier(sycl::access::fence_space::local_space);
 
-                        min_idx = closest.template get<0>();
-                        min_sample_pseudo_inertia = closest.template get<1>();
+                        min_idx = closest.first;
+                        min_sample_pseudo_inertia = closest.second;
                     }
 
                     if (sample_idx < n_samples) {
@@ -140,4 +140,6 @@ assignment(
                 }
             );
         });
+
+    return e;
 }

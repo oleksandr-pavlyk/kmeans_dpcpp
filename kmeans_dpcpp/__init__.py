@@ -6,6 +6,8 @@ from ._kmeans_dpcpp import (
     select_samples_far_from_centroid,
     relocate_empty_clusters,
     compute_centroid_shifts_squared,
+    compute_centroid_to_sample_distances,
+    assignment,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "select_samples_far_from_centroid",
     "relocate_empty_clusters",
     "compute_centroid_shifts_squared",
+    "compute_centroid_to_sample_distances",
+    "assignment",
 ]

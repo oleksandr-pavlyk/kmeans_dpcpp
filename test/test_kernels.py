@@ -6,31 +6,33 @@ import kmeans_dpcpp as kdp
 import numpy as np
 
 def test_broadcast_divide():
-    X = dpt.full((16, 5), 27.0, dtype='f4')
-    y = dpt.asarray([1, 3, 9, 3, 1], dtype='f4')
+    dataT = dpt.float32
+    X = dpt.full((16, 5), 27.0, dtype=dataT)
+    y = dpt.asarray([1, 3, 9, 3, 1], dtype=dataT)
 
     ht, _ = kdp.broadcast_divide(X, y, sycl_queue=X.sycl_queue)
     ht.wait()
 
     X_np = dpt.asnumpy(X)
-    X_expected = np.full((16, 5), np.array([27, 9, 3, 9, 27], dtype='f4'))
+    X_expected = np.full((16, 5), np.array([27, 9, 3, 9, 27], dtype=dataT))
     tol = np.finfo(X.dtype).resolution
     assert np.allclose( X_np, X_expected, rtol=tol )
 
 
 def test_half_l2_norm_squared():
-    X1 = dpt.ones((3, 2), dtype='f4')
-    X2 = dpt.full((3, 4), 2., dtype='f4')
-    X = dpt.empty((3, 6), dtype='f4')
+    dataT = dpt.float32
+    X1 = dpt.ones((3, 2), dtype=dataT)
+    X2 = dpt.full((3, 4), 2., dtype=dataT)
+    X = dpt.empty((3, 6), dtype=dataT)
     X[:, :4] = X2
     X[:, 4:] = X1
-    y = dpt.empty((X.shape[1],), dtype='f4')
+    y = dpt.empty((X.shape[1],), dtype=dataT)
 
     ht, _ = kdp.half_l2_norm_squared(X, y, sycl_queue=X.sycl_queue)
     ht.wait()
 
     y_np = dpt.asnumpy(y)
-    y_expected = np.array([6., 6., 6., 6., 1.5, 1.5], dtype='f4')
+    y_expected = np.array([6., 6., 6., 6., 1.5, 1.5], dtype=dataT)
     tol = np.finfo(X.dtype).resolution
     assert np.allclose( y_np, y_expected, rtol=tol )
 
@@ -247,3 +249,85 @@ def test_centroid_shifts():
         np.array([5, 8], dtype=dataT),
         rtol = np.finfo(dataT).resolution
     )
+
+
+def test_compute_centoid_to_sample_distances():
+    dataT = np.float32
+    # compute_centroid_to_sample_distances(X_t, centroid_t, dm, work_group_size, 
+    # centroids_window_height, sycl_queue=q, depends=[]
+    # )
+    ps = np.array([
+        [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
+    ], dtype=dataT)
+    # create 8 random points around each p
+    Xnp = np.concatenate([
+        np.random.normal(0, 0.1, size=(8,3)).astype(dataT) + p for p in ps
+    ], axis=0)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+    Cnt = np.ascontiguousarray(ps.T)
+
+    Xt = dpt.asarray(Xnp_t, dtype=dataT)
+    assert Xt.flags.c_contiguous
+    centroid_t = dpt.asarray(Cnt, dtype=dataT)
+    assert centroid_t.flags.c_contiguous
+
+    dm = dpt.empty((centroid_t.shape[1], Xt.shape[1]), dtype=dataT)
+    assert dm.flags.c_contiguous
+
+    q = Xt.sycl_queue
+    ht, _ = kdp.compute_centroid_to_sample_distances(
+        Xt, centroid_t, dm, 256, 8, sycl_queue=q
+    )
+    ht.wait()
+
+    dm_ref = np.sqrt(
+        np.sum(np.square( Xnp_t[:, np.newaxis, :] - Cnt[:, :, np.newaxis] ), axis=0)
+    )
+
+    assert np.allclose(
+        dpt.asnumpy(dm),
+        dm_ref,
+        rtol = np.finfo(dataT).resolution
+    )
+
+
+def test_assignment():
+    dataT = np.float32
+    indT = np.int32
+    cloud_size = 32
+
+    ps = np.array([
+        [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
+    ], dtype=dataT)
+    Xnp = np.concatenate([
+        np.random.normal(0, 0.1, size=(cloud_size,3)).astype(dataT) + p for p in ps
+    ], axis=0)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+    Cnt = np.ascontiguousarray(ps.T)
+
+    Xt = dpt.asarray(Xnp_t, dtype=dataT)
+    assert Xt.flags.c_contiguous
+    centroid_t = dpt.asarray(Cnt, dtype=dataT)
+    assert centroid_t.flags.c_contiguous
+
+    hl2n = dpt.empty(centroid_t.shape[1], dtype=dataT)
+    assigned_id = dpt.empty(Xt.shape[1], dtype=indT)
+    q = Xt.sycl_queue
+
+    ht1, e_hl2n = kdp.half_l2_norm_squared(centroid_t, hl2n, sycl_queue=q)
+    
+    ht2, _ = kdp.assignment(
+        Xt, centroid_t, hl2n, assigned_id, 
+        centroids_window_height = 8,
+        work_group_size=256,
+        sycl_queue=q,
+        depends=[e_hl2n,]
+    )
+
+    ht1.wait()
+    ht2.wait()
+
+    expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
+
+    assert np.array_equal(expected_ids, dpt.asnumpy(assigned_id))
+

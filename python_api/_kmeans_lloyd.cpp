@@ -1,13 +1,27 @@
 #include <cstdint>
 #include <vector>
 #include <utility>
+#include <iostream>
 #include <CL/sycl.hpp>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include "dpctl4pybind11.hpp"
+
 #include "util_kernels.hpp"
+#include "compute_euclidean_distance.hpp"
+#include "assignment.hpp"
 
 namespace py = pybind11;
+
+template <std::size_t num>
+bool all_c_contiguous(const dpctl::tensor::usm_ndarray (&args)[num]) {
+  bool all_contig = true;
+  for (size_t i = 0; all_contig && i < num; ++i) {
+    all_contig = args[i].is_c_contiguous();
+  }
+  return all_contig;
+}
+
 
 /*! @brief Evaluates X /= y */
 std::pair<sycl::event, sycl::event>
@@ -20,7 +34,7 @@ py_broadcast_divide(
   int X_ndim = X.get_ndim();
   int y_ndim = y.get_ndim();
 
-  if (X_ndim != 2 || y_ndim != 1 || !X.is_c_contiguous() || !y.is_c_contiguous()) {
+  if (X_ndim != 2 || y_ndim != 1 || !all_c_contiguous({X, y})) {
     throw py::value_error("Arguments must be a matrix and a vector with C-contiguous layout");
   }
 
@@ -67,7 +81,7 @@ py_half_l2_norm_squared(
   int X_ndim = X.get_ndim();
   int y_ndim = y.get_ndim();
 
-  if (X_ndim != 2 || y_ndim != 1 || !X.is_c_contiguous() || !y.is_c_contiguous()) {
+  if (X_ndim != 2 || y_ndim != 1 || !all_c_contiguous({X, y})) {
     throw py::value_error("Arguments must be a matrix and a vector with C-contiguous layout");
   }
 
@@ -150,12 +164,11 @@ py_reduce_centroids_data(
       throw py::value_error("Array element data types must be consisten");
     }
 
-  if (!cluster_sizes_private_copies.is_c_contiguous() ||
-      !centroids_t_private_copies.is_c_contiguous() ||
-      !out_cluster_sizes.is_c_contiguous() ||
-      !out_centroids_t.is_c_contiguous() ||
-      !out_empty_clusters_list.is_c_contiguous() ||
-      !out_n_empty_clusters.is_c_contiguous())
+  if (!all_c_contiguous({
+        cluster_sizes_private_copies, centroids_t_private_copies,
+        out_cluster_sizes, out_centroids_t, out_empty_clusters_list,
+        out_n_empty_clusters
+      }))
   {
     throw py::value_error("All array arguments must be C-contiguous");
   }
@@ -244,7 +257,7 @@ py_compute_threshold(
   sycl::queue q,
   const std::vector<sycl::event> &depends = {}
 ) {
-  if (data.get_ndim() !=1 || !data.is_c_contiguous()) {
+  if (data.get_ndim() !=1 || !all_c_contiguous({data, threshold})) {
     throw py::value_error("Argument data must be a C-contiguous vector");
   }
 
@@ -321,7 +334,7 @@ py_select_samples_far_from_centroid(
     throw py::value_error("Vector `selected_samples_idx` must have size of at least `n_selected` elements");
   }
 
-  if (!distance_to_centroid.is_c_contiguous() || !selected_samples_idx.is_c_contiguous()) {
+  if (!all_c_contiguous({distance_to_centroid, selected_samples_idx})) {
     throw py::value_error("Arrays must be C-contiguous");
   }
 
@@ -423,10 +436,8 @@ py_relocate_empty_clusters(
     throw py::value_error("Arguments have inconsistent array dimensionality.");
   }
 
-  if (!X_t.is_c_contiguous() || !sample_weights.is_c_contiguous() || 
-      !assignment_id.is_c_contiguous() || !empty_clusters_list.is_c_contiguous() ||
-      !sq_dist_to_nearest_centroid.is_c_contiguous() || !centroid_t.is_c_contiguous() || 
-      !cluster_sizes.is_c_contiguous() || !per_sample_inertia.is_c_contiguous())
+  if (!all_c_contiguous({X_t, sample_weights, assignment_id, empty_clusters_list, 
+                        sq_dist_to_nearest_centroid, centroid_t, cluster_sizes, per_sample_inertia}))
   {
     throw py::value_error("Inputs must be C-contiguous");
   }
@@ -574,7 +585,7 @@ py_compute_centroid_shifts_squared_kernel(
     throw py::value_error("Array dimensions are not consistent.");
   }
 
-  if ( !new_centroid_t.is_c_contiguous() || !old_centroid_t.is_c_contiguous() || !centroid_shifts.is_c_contiguous() ) {
+  if (!all_c_contiguous({new_centroid_t, old_centroid_t, centroid_shifts})) {
     throw py::value_error("Arguments must be C-contiguous arrays");
   }
 
@@ -624,6 +635,185 @@ py_compute_centroid_shifts_squared_kernel(
   return std::make_pair(ht_ev, comp_ev);
 }
 
+std::pair<sycl::event, sycl::event>
+py_compute_distances(
+  dpctl::tensor::usm_ndarray X_t,                    // IN (n_feautes, n_samples)
+  dpctl::tensor::usm_ndarray centroid_t,             // IN (n_features, n_clusters)
+  dpctl::tensor::usm_ndarray euclidean_distances_t,  // OUT (n_clusters, n_samples)
+  size_t work_group_size, 
+  size_t centroids_window_height, 
+  sycl::queue q,
+  const std::vector<sycl::event> &depends = {}
+) {
+  if ( 2 != X_t.get_ndim() || 2 != centroid_t.get_ndim() || 2 != euclidean_distances_t.get_ndim()) {
+    throw py::value_error("Input arrays must have dimensionality 2.");
+  }
+
+  if (!all_c_contiguous({X_t, centroid_t, euclidean_distances_t})) {
+    throw py::value_error("Input arrays must be C-contiguous.");
+  }
+
+  py::ssize_t n_features = X_t.get_shape(0);
+  py::ssize_t n_samples = X_t.get_shape(1);
+  py::ssize_t n_clusters = euclidean_distances_t.get_shape(0);
+
+  if ( n_features != centroid_t.get_shape(0) || n_clusters != centroid_t.get_shape(1) || n_samples != euclidean_distances_t.get_shape(1)) {
+    std::cout << (n_features != centroid_t.get_shape(0))
+    << " " <<  (n_clusters != centroid_t.get_shape(1)) << " " << (n_samples != euclidean_distances_t.get_shape(1)) << std::endl;
+    throw py::value_error("Input array dimensions are not consistant");
+  }
+
+  if (!dpctl::utils::queues_are_compatible(q, {X_t.get_queue(), centroid_t.get_queue(), euclidean_distances_t.get_queue()})) {
+    throw py::value_error("Execution queue is not compatible with allocation queues");
+  }
+
+  int typenum = X_t.get_typenum();
+
+  if (typenum != centroid_t.get_typenum() || typenum != euclidean_distances_t.get_typenum()) {
+    throw py::value_error("Arrays must have the same elemental data types");
+  }
+
+  const auto &api = ::dpctl::detail::dpctl_capi::get();
+  constexpr size_t preferred_work_group_size_multiplier = 8;
+  constexpr size_t centroids_window_width_multiplier = 4;
+
+  sycl::event comp_ev; 
+  if (typenum == api.UAR_FLOAT_) {
+    using dataT = float;
+
+    comp_ev = compute_distances<dataT, preferred_work_group_size_multiplier, centroids_window_width_multiplier>(
+      q, 
+      n_samples, 
+      n_features, 
+      n_clusters,
+      centroids_window_height,
+      work_group_size,
+      X_t.get_data<dataT>(),
+      centroid_t.get_data<dataT>(), 
+      euclidean_distances_t.get_data<dataT>(),
+      depends
+    );
+  } else if (typenum == api.UAR_DOUBLE_) {
+    using dataT = double;
+
+    comp_ev = compute_distances<dataT, preferred_work_group_size_multiplier, centroids_window_width_multiplier>(
+      q, 
+      n_samples, 
+      n_features, 
+      n_clusters,
+      centroids_window_height,
+      work_group_size,
+      X_t.get_data<dataT>(),
+      centroid_t.get_data<dataT>(), 
+      euclidean_distances_t.get_data<dataT>(),
+      depends
+    );
+  } else {
+    throw py::value_error("Unsupported elemental data type");
+  }
+
+  sycl::event ht_ev = dpctl::utils::keep_args_alive(q, 
+    {X_t, centroid_t, euclidean_distances_t}, {comp_ev});
+
+  return std::make_pair(ht_ev, comp_ev);   
+}
+
+std::pair<sycl::event, sycl::event>
+py_assignment(
+  dpctl::tensor::usm_ndarray X_t,        // IN (n_features, n_samples)
+  dpctl::tensor::usm_ndarray centroid_t, // IN (n_features, n_clusters)
+  dpctl::tensor::usm_ndarray centroids_half_l2_norm, // (n_clusters,)
+  dpctl::tensor::usm_ndarray assignment_id,  // OUT (n_samples, )
+  size_t centroids_window_height, 
+  size_t work_group_size, 
+  sycl::queue q,
+  const std::vector<sycl::event> &depends={}
+) {
+  if ( 2 != X_t.get_ndim() || 2 != centroid_t.get_ndim() || 1 != centroids_half_l2_norm.get_ndim() || 1 != assignment_id.get_ndim()) {
+    throw py::value_error("Inputs have unexpected dimensionality.");
+  }
+
+  if (!all_c_contiguous({X_t, centroid_t, centroids_half_l2_norm, assignment_id})) {
+    throw py::value_error("Inputs must be C-contiguous arrays.");
+  }
+
+  py::ssize_t n_features = X_t.get_shape(0); 
+  py::ssize_t n_samples = X_t.get_shape(1);
+  py::ssize_t n_clusters = centroids_half_l2_norm.get_shape(0);
+
+  if (n_features != centroid_t.get_shape(0) || n_clusters != centroid_t.get_shape(1) || n_samples != assignment_id.get_shape(0)) {
+    throw py::value_error("Inputs have inconsistent dimensions.");
+  } 
+
+  if(!dpctl::utils::queues_are_compatible(q, {X_t.get_queue(), centroid_t.get_queue(), centroids_half_l2_norm.get_queue(), assignment_id.get_queue()})) {
+    throw py::value_error("Execution queue is incompatible with allocation queues.");
+  }
+
+  int dataT_typenum = X_t.get_typenum();
+  int indT_typenum = assignment_id.get_typenum();
+
+  if (dataT_typenum != centroid_t.get_typenum() || dataT_typenum != centroids_half_l2_norm.get_typenum()) {
+    throw py::value_error("Arrays have inconsistent elemental data types");
+  }
+
+  const auto &api = dpctl::detail::dpctl_capi::get();
+  constexpr size_t preferred_work_group_size_multiplier = 8;
+  constexpr size_t centroids_window_width_multiplier = 4;
+
+  sycl::event comp_ev;
+  if(dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = float;
+    using indT = std::int32_t;
+
+    comp_ev = assignment<dataT, indT, preferred_work_group_size_multiplier, centroids_window_width_multiplier>(
+      q,
+      n_samples, n_features, n_clusters, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), centroid_t.get_data<dataT>(), 
+      centroids_half_l2_norm.get_data<dataT>(), assignment_id.get_data<indT>(),
+      depends
+    );
+  } else if (dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = double;
+    using indT = std::int32_t;
+
+    comp_ev = assignment<dataT, indT, preferred_work_group_size_multiplier, centroids_window_width_multiplier>(
+      q,
+      n_samples, n_features, n_clusters, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), centroid_t.get_data<dataT>(), 
+      centroids_half_l2_norm.get_data<dataT>(), assignment_id.get_data<indT>(),
+      depends
+    );
+  } else if(dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = float;
+    using indT = std::int64_t;
+
+    comp_ev = assignment<dataT, indT, preferred_work_group_size_multiplier, centroids_window_width_multiplier>(
+      q,
+      n_samples, n_features, n_clusters, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), centroid_t.get_data<dataT>(), 
+      centroids_half_l2_norm.get_data<dataT>(), assignment_id.get_data<indT>(),
+      depends
+    );
+  } else if (dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = double;
+    using indT = std::int64_t;
+
+    comp_ev = assignment<dataT, indT, preferred_work_group_size_multiplier, centroids_window_width_multiplier>(
+      q,
+      n_samples, n_features, n_clusters, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), centroid_t.get_data<dataT>(), 
+      centroids_half_l2_norm.get_data<dataT>(), assignment_id.get_data<indT>(),
+      depends
+    );
+  } else {
+    throw py::value_error("Unsupported array elemental data type");
+  }
+
+  sycl::event ht_ev = dpctl::utils::keep_args_alive(q, {X_t, centroid_t, centroids_half_l2_norm, assignment_id}, {comp_ev});
+
+  return std::make_pair(ht_ev, comp_ev);
+}
+
 PYBIND11_MODULE(_kmeans_dpcpp, m) {
   m.def(
     "broadcast_divide", &py_broadcast_divide,
@@ -663,7 +853,9 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
 
   m.def(
     "select_samples_far_from_centroid", &py_select_samples_far_from_centroid,
-    "select_samples_far_from_centroid(n_selected, distance_to_centroid, threshold, selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold, sycl_queue=q, depends=[])",
+    "select_samples_far_from_centroid(n_selected, distance_to_centroid, threshold, selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold, sycl_queue=q, depends=[]) "
+    " populates `selected_samples_idx` with ids of observations whose distance to nearest centroid is greater than `threshold`. The last element of `selected_samples_idx` is "
+    " populated with id of the observation whose distance to centroid centroid equals to `threshold`. `n_selected_gt_threshold` and `n_selected_eq_threshold` are temporary scalars.",
     py::arg("n_selected"), py::arg("distance_to_centroid"), py::arg("threshold"),
     py::arg("selected_samples_idx"), py::arg("n_selected_gt_threshold"), 
     py::arg("n_selected_eq_threshold"), py::arg("sycl_queue"), py::arg("depends") = py::list()
@@ -671,7 +863,7 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
 
   m.def(
     "relocate_empty_clusters", &py_relocate_empty_clusters,
-    "",
+    "Relocates empty clustsers, modifies centroid_t, cluster_sizes, per_sample_inertia",
     py::arg("n_empty_clusters"),    // int
     py::arg("X_t"),                 // IN (n_features, n_samples,)      dataT
     py::arg("sample_weights"),      // IN (n_samples, )                 dataT
@@ -687,10 +879,37 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
 
   m.def(
     "compute_centroid_shifts_squared", &py_compute_centroid_shifts_squared_kernel,
-    "",
+    "Computes equivalent of `np.sum(np.square(old_centroid_t - new_centroid_t), axis=0)",
     py::arg("centroid_t"),          // IN (n_features, n_clusters, )
     py::arg("new_centroid_t"),      // IN (n_features, n_clusters, )
     py::arg("out_centroid_shifts"), // OUT (n_clusters)
+    py::arg("sycl_queue"),
+    py::arg("depends") = py::list()
+  );
+
+  m.def("compute_centroid_to_sample_distances", &py_compute_distances,
+  "Computes distances from centroids to samples. "
+  "Inputs: X_t - samples with shape (n_features, n_samples), "
+  "centroid_t - centroids with shape (n_features, n_clusters), "
+  "and output - euclidean_distances_t with shape (n_clusters, n_samples).",
+  py::arg("X_t"),                  // IN (n_features, n_samples)
+  py::arg("centroid_t"),           // IN (n_features, n_clusters)
+  py::arg("euclidean_distances_t"),// OUT (n_clusters, n_samples)
+  py::arg("work_group_size"),
+  py::arg("centroids_window_height"),
+  py::arg("sycl_queue"),
+  py::arg("depends") = py::list()
+  );
+
+  m.def(
+    "assignment", &py_assignment, 
+    "",
+    py::arg("X_t"),                     // IN (n_features, n_samples,)
+    py::arg("centroids_t"),             // IN (n_features, n_clusters, )
+    py::arg("centroids_half_l2_norm"),  // IN (n_clusters, )
+    py::arg("assignment_id"),           // OUT (n_samples,)
+    py::arg("centroids_window_height"),
+    py::arg("work_group_size"),
     py::arg("sycl_queue"),
     py::arg("depends") = py::list()
   );

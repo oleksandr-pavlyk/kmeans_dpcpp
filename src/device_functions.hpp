@@ -115,7 +115,7 @@ void _acummulate_sum_of_ops(
     size_t first_feature_idx,
     const T *X_t,
     cwT centroids_window,
-    resT result
+    resT &result
 ) {
     constexpr T zero(0);
     bool in_bound_sample = (sample_idx < n_samples);
@@ -137,14 +137,14 @@ void _acummulate_sum_of_ops(
     }
 }
 
-template <typename T>
+template <typename T, typename slmT>
 std::pair<size_t, T> _update_closest_centroid(
     size_t window_n_centroids,
     // =================================
     size_t first_centroid_idx,
     size_t min_idx,
     T min_sample_pseudo_inertia,
-    const T *window_of_centroids_half_l2_norms,
+    slmT window_of_centroids_half_l2_norms,
     const T *dot_products
 ) {
     size_t min_idx_ = min_idx;
@@ -159,6 +159,6 @@ std::pair<size_t, T> _update_closest_centroid(
         min_sample_pseudo_inertia_ = (update) ? current_sample_pseudo_inertia : min_sample_pseudo_inertia_;
     }
 
-    return std::make_pair<size_t, T>(min_idx_, min_sample_pseudo_inertia_);
+    return std::make_pair(min_idx_, min_sample_pseudo_inertia_);
 }
 
