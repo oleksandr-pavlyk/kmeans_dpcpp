@@ -1,9 +1,10 @@
 #include <cstdint>
 #include <vector>
 #include <utility>
-#include <iostream>
+#include <sstream>
 #include <CL/sycl.hpp>
 #include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include "dpctl4pybind11.hpp"
 
@@ -12,6 +13,7 @@
 #include "assignment.hpp"
 #include "compute_inertia.hpp"
 #include "lloyd_single_step.hpp"
+#include "kmeans_lloyd_driver.hpp"
 
 namespace py = pybind11;
 
@@ -1125,6 +1127,134 @@ size_t py_compute_number_of_private_copies(
   }
 }
 
+std::pair<size_t, py::array>
+py_kmeans_lloyd_driver(
+  dpctl::tensor::usm_ndarray X_t,
+  dpctl::tensor::usm_ndarray sample_weight,
+  dpctl::tensor::usm_ndarray init_centroids_t,
+  dpctl::tensor::usm_ndarray assignment_id,
+  dpctl::tensor::usm_ndarray res_centroids_t,
+  double tol,
+  bool verbose,
+  size_t max_iter,
+  size_t centroids_window_height, 
+  size_t work_group_size,
+  double centroids_private_copies_max_cache_occupancy,
+  sycl::queue q,
+  const std::vector<sycl::event> &depends = {}
+) {
+
+  if (!is_2d(X_t) || !is_1d(sample_weight) || !is_2d(init_centroids_t) || !is_2d(res_centroids_t) || !is_1d(assignment_id)) {
+    throw py::value_error("Unsupported array dimensionalities");
+  }
+
+  if (!all_c_contiguous({X_t, sample_weight, init_centroids_t, assignment_id, res_centroids_t})) {
+    throw py::value_error("All input arrays must be C-contiguous");
+  }
+
+  if (!dpctl::utils::queues_are_compatible(q, {
+    X_t.get_queue(), sample_weight.get_queue(), init_centroids_t.get_queue(),
+    assignment_id.get_queue(), res_centroids_t.get_queue()
+  })) {
+    throw py::value_error("Execution queue is not compatible with allocation queues");
+  }
+
+  py::ssize_t n_features = X_t.get_shape(0);
+  py::ssize_t n_samples = X_t.get_shape(1);
+  py::ssize_t n_clusters = init_centroids_t.get_shape(1);
+
+  if ( n_features != init_centroids_t.get_shape(0) || n_features != res_centroids_t.get_shape(0) || 
+       n_clusters != res_centroids_t.get_shape(1) || n_samples != sample_weight.get_shape(0) ||
+       n_samples != assignment_id.get_shape(0)
+  ) {
+    throw py::value_error("Array dimensions are not consistent");
+  }
+
+  int dataT_typenum = X_t.get_typenum();
+  int indT_typenum = assignment_id.get_typenum();
+
+  if (!same_typenum_as(dataT_typenum, {sample_weight, init_centroids_t, res_centroids_t})) {
+    throw py::value_error("Sample coordinates, weights and centroids must have the same elemental data types");
+  }
+
+  if (centroids_private_copies_max_cache_occupancy <= 0.0 || centroids_private_copies_max_cache_occupancy >= 1.0) {
+    throw py::value_error("Fraction `centroids_private_copies_max_cache_occupancy` is out of bounds");
+  } 
+
+  if (tol < 0.0) {
+    throw py::value_error("Tolerance must be non-negative");
+  }
+
+
+  const auto &api = dpctl::detail::dpctl_capi::get();
+  auto py_print_fn = [](const std::stringstream &ss) -> void { py::print( ss.str() ); };
+
+  size_t n_iters_;
+  py::array py_total_inertia;
+
+  if( dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = float;
+    using indT = std::int32_t;
+
+    auto tmp = py::array_t<dataT>(1);
+    dataT *total_inertia_ptr = tmp.mutable_data(0);
+    py_total_inertia = py::cast<py::array>(tmp);
+
+    n_iters_ =  driver_lloyd<dataT, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier, decltype(py_print_fn)>(
+      q, n_samples, n_features, n_clusters, centroids_private_copies_max_cache_occupancy, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), sample_weight.get_data<dataT>(), init_centroids_t.get_data<dataT>(), 
+      max_iter, verbose, static_cast<dataT>(tol), 
+      assignment_id.get_data<indT>(), res_centroids_t.get_data<dataT>(), *total_inertia_ptr, py_print_fn
+    );
+  } else if( dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = double;
+    using indT = std::int32_t;
+
+    auto tmp = py::array_t<dataT>(1);
+    dataT *total_inertia_ptr = tmp.mutable_data(0);
+    py_total_inertia = py::cast<py::array>(tmp);
+
+    n_iters_ =  driver_lloyd<dataT, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier, decltype(py_print_fn)>(
+      q, n_samples, n_features, n_clusters, centroids_private_copies_max_cache_occupancy, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), sample_weight.get_data<dataT>(), init_centroids_t.get_data<dataT>(), 
+      max_iter, verbose, static_cast<dataT>(tol), 
+      assignment_id.get_data<indT>(), res_centroids_t.get_data<dataT>(), *total_inertia_ptr, py_print_fn
+    );
+  } else if( dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = float;
+    using indT = std::int64_t;
+
+    auto tmp = py::array_t<dataT>(1);
+    dataT *total_inertia_ptr = tmp.mutable_data(0);
+    py_total_inertia = py::cast<py::array>(tmp);
+
+    n_iters_ =  driver_lloyd<dataT, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier, decltype(py_print_fn)>(
+      q, n_samples, n_features, n_clusters, centroids_private_copies_max_cache_occupancy, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), sample_weight.get_data<dataT>(), init_centroids_t.get_data<dataT>(), 
+      max_iter, verbose, static_cast<dataT>(tol), 
+      assignment_id.get_data<indT>(), res_centroids_t.get_data<dataT>(), *total_inertia_ptr, py_print_fn
+    );
+  } else if( dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = double;
+    using indT = std::int64_t;
+
+    auto tmp = py::array_t<dataT>(1);
+    dataT *total_inertia_ptr = tmp.mutable_data(0);
+    py_total_inertia = py::cast<py::array>(tmp);
+
+    n_iters_ =  driver_lloyd<dataT, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier, decltype(py_print_fn)>(
+      q, n_samples, n_features, n_clusters, centroids_private_copies_max_cache_occupancy, centroids_window_height, work_group_size,
+      X_t.get_data<dataT>(), sample_weight.get_data<dataT>(), init_centroids_t.get_data<dataT>(), 
+      max_iter, verbose, static_cast<dataT>(tol), 
+      assignment_id.get_data<indT>(), res_centroids_t.get_data<dataT>(), *total_inertia_ptr, py_print_fn
+    );
+  } else {
+    throw py::value_error("Unsupport elemental data type");
+  }
+
+  return std::make_pair(n_iters_, py_total_inertia);
+}
+
 PYBIND11_MODULE(_kmeans_dpcpp, m) {
   m.def(
     "broadcast_divide", &py_broadcast_divide,
@@ -1267,9 +1397,33 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
   m.def(
     "compute_number_of_private_copies",
     &py_compute_number_of_private_copies,
-    "",
+    "Computes optimal number of private copies parametrized by max-cache-ocupancy fraction.",
     py::arg("array"),  // Any array carrying data-type of interest, and allocation queue
     py::arg("n_samples"), py::arg("n_features"), py::arg("n_clusters"),
     py::arg("centroids_private_copies_max_cache_occupancy"), py::arg("work_group_size")
+  );
+
+  // returns (ht_ev, comp_ev, n_iters_, total_inertia_, )
+  m.def(
+    "kmeans_lloyd_driver",
+    &py_kmeans_lloyd_driver,
+    "Implement Lloyd's refinement algorithm. "
+    "Returns 2-tuple, number of iterations performed and 0d numpy array with total_inertia "
+    "of the returned configuration. "
+    ""
+    "Array init_centroid_t is overwritten.",
+    py::arg("X_t"),             // IN        (n_features, n_samples, )
+    py::arg("sample_weight"),   // IN        (n_sample, )
+    py::arg("init_centroid_t"), // IN-OUT    (n_features, n_clusters,)
+    py::arg("assignments_id"),  // OUT       (n_samples, )
+    py::arg("res_centroids_t"), // OUT       (n_features, n_clusters,)
+    py::arg("tol"),             // double
+    py::arg("verbose"),         // bool
+    py::arg("max_iter"),        // size_t
+    py::arg("centroids_window_height"),  // size_t
+    py::arg("work_group_size"),
+    py::arg("centroids_private_copies_max_cache_occupancy"), // double, fraction in (0, 1)
+    py::arg("sycl_queue"), 
+    py::arg("depends") = py::list()
   );
 }

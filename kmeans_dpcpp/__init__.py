@@ -12,6 +12,7 @@ from ._kmeans_dpcpp import (
     reduce_vector_blocking,
     fused_lloyd_single_step,
     compute_number_of_private_copies,
+    kmeans_lloyd_driver,
 )
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "reduce_vector_blocking",
     "fused_lloyd_single_step",
     "compute_number_of_private_copies",
+    "kmeans_lloyd_driver"
 ]
 
 __doc__ = """
