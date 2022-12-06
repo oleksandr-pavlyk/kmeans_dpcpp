@@ -10,6 +10,8 @@ from ._kmeans_dpcpp import (
     assignment,
     compute_inertia,
     reduce_vector_blocking,
+    fused_lloyd_single_step,
+    compute_number_of_private_copies,
 )
 
 __all__ = [
@@ -24,4 +26,10 @@ __all__ = [
     "assignment",
     "compute_inertia",
     "reduce_vector_blocking",
+    "fused_lloyd_single_step",
+    "compute_number_of_private_copies",
 ]
+
+__doc__ = """
+This module implements DPC++ offloading routines necessary for implementing Lloyd's algorithm to solve K-Means problem.
+"""

@@ -66,6 +66,7 @@ def test_reduce_centroids_data():
         out_centroids_t,               # (n_features, n_clusters,)
         out_empty_clusters_list,       # (n_clusters,)
         out_n_empty_clusters,          # (1,)
+        work_group_size=256,
         sycl_queue=q
     )
     ht.wait()
@@ -108,6 +109,7 @@ def test_reduce_centroids_data_empty():
         out_centroids_t,               # (n_features, n_clusters,)
         out_empty_clusters_list,       # (n_clusters,)
         out_n_empty_clusters,          # (1,)
+        work_group_size=128,
         sycl_queue=q
     )
     ht.wait()
@@ -163,6 +165,7 @@ def test_select_samples_far_from_centroid_kernel():
     ht_ev2, _ = kdp.select_samples_far_from_centroid(
         n_empty_clusters, distance_to_centroid, threshold,
         selected_samples_idx, n_selected_gt_threshold, n_selected_eq_threshold,
+        work_group_size=256,
         sycl_queue=q,
         depends=[c_ev]
     )
@@ -214,6 +217,7 @@ def test_relocate_empty_clusters():
         n_empty_clusters,
         X_t, sample_weights, assignment_id, empty_clusters_list, sq_dist_to_nearest_centroid,
         centroid_t, cluster_sizes, per_sample_inertia,
+        work_group_size=256,
         sycl_queue = q
     )
     ht.wait()
@@ -253,7 +257,7 @@ def test_centroid_shifts():
 
 def test_compute_centoid_to_sample_distances():
     dataT = np.float32
-    # compute_centroid_to_sample_distances(X_t, centroid_t, dm, work_group_size, 
+    # compute_centroid_to_sample_distances(X_t, centroid_t, dm, work_group_size,
     # centroids_window_height, sycl_queue=q, depends=[]
     # )
     ps = np.array([
@@ -315,9 +319,9 @@ def test_assignment():
     q = Xt.sycl_queue
 
     ht1, e_hl2n = kdp.half_l2_norm_squared(centroid_t, hl2n, sycl_queue=q)
-    
+
     ht2, _ = kdp.assignment(
-        Xt, centroid_t, hl2n, assigned_id, 
+        Xt, centroid_t, hl2n, assigned_id,
         centroids_window_height = 8,
         work_group_size=256,
         sycl_queue=q,
@@ -372,8 +376,8 @@ def test_compute_inertia():
         np.sum(np.square(Xnp_t - np.take_along_axis(Cnt, _ids[np.newaxis,:], axis=1)), axis=0)
 
     assert np.allclose(
-        expected_per_sample_inertia, 
-        dpt.asnumpy(per_sample_inertia), 
+        expected_per_sample_inertia,
+        dpt.asnumpy(per_sample_inertia),
         rtol=np.finfo(dataT).resolution
     )
 
@@ -386,3 +390,71 @@ def test_reduce_vector_blocking():
     res = kdp.reduce_vector_blocking(vec, sycl_queue=q)
 
     assert res == 50 * 99  # sum(k, 0 <= k < 100) == 100 * 99 / 2
+
+def test_lloyd_single_step():
+    dataT = dpt.float32
+    indT = dpt.int32
+
+    cloud_size = 16
+
+    ps = np.array([
+        [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
+    ], dtype=dataT)
+    Xnp = np.concatenate([
+        np.random.normal(0, 0.1, size=(cloud_size,3)).astype(dataT) + p for p in ps
+    ], axis=0)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+    Cnt = np.ascontiguousarray(ps.T)
+
+    Xt = dpt.asarray(Xnp_t, dtype=dataT)
+    n_features, n_samples = Xt.shape
+    assert n_features == 3
+
+    n_clusters = ps.shape[0]
+    assert Xt.flags.c_contiguous
+    centroid_t = dpt.asarray(Cnt, dtype=dataT)
+    assert centroid_t.flags.c_contiguous
+
+    centroids_half_l2_norm = dpt.asarray(np.sum(np.square(Cnt), axis=0) / 2)
+
+    _ids = np.repeat(np.arange(n_clusters, dtype=indT), cloud_size)
+    assignment_id = dpt.empty(_ids.shape, dtype=_ids.dtype)
+    sample_weight = dpt.ones(n_samples, dtype=dataT)
+
+    n_copies = 4
+    new_centroids_t_private_copies = dpt.zeros((n_copies, n_features, n_clusters,), dtype=dataT)
+    cluster_sizes_private_copies = dpt.zeros((n_copies, n_clusters,), dtype=dataT)
+
+    q = Xt.sycl_queue
+
+    ht, _ = kdp.fused_lloyd_single_step(
+        Xt, sample_weight, centroid_t, centroids_half_l2_norm, assignment_id,
+        new_centroids_t_private_copies,
+        cluster_sizes_private_copies,
+        8,      # centroids_window_height
+        256,    # work_group_size
+        q       # sycl_queue
+    )
+    ht.wait()
+
+    assert np.array_equal(_ids, dpt.asnumpy(assignment_id))
+
+    expected_cluster_sizes = np.sum(dpt.asnumpy(cluster_sizes_private_copies), axis=0)
+
+    assert np.allclose(
+        expected_cluster_sizes,
+        np.full((n_clusters, ), cloud_size, dtype=dataT),
+        rtol = np.finfo(dataT).resolution
+    )
+
+    expected_new_centroid_t = np.reshape(Xnp_t, (n_features, cloud_size, n_clusters)).sum(axis=1)
+    actual_new_centroid_t = np.sum(dpt.asnumpy(new_centroids_t_private_copies), axis=0)
+
+    print(expected_new_centroid_t)
+    print(actual_new_centroid_t)
+
+    assert np.allclose(
+        expected_new_centroid_t,
+        actual_new_centroid_t,
+        rtol = np.finfo(dataT).resolution
+    )

@@ -6,8 +6,33 @@
 
 #include "quotients_utils.hpp"
 
-template <typename T, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier> 
+template <typename T, typename indT, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
 class lloyd_single_step_krn;
+
+template <typename T, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
+size_t compute_number_of_private_copies(
+    sycl::queue q,
+    size_t n_samples,
+    size_t n_features,
+    size_t n_clusters,
+    double centroids_private_copies_max_cache_occupancy,
+    size_t work_group_size
+) {
+    size_t global_mem_cache_size = q.get_device().get_info<sycl::info::device::global_mem_cache_size>();
+
+    size_t n_cluster_items = n_clusters * (n_features + 1);
+    size_t n_cluster_bytes = sizeof(T) * n_cluster_items;
+
+    size_t n_centroids_private_copies = static_cast<size_t>(
+        (global_mem_cache_size * centroids_private_copies_max_cache_occupancy) / n_cluster_bytes);
+
+    size_t global_size = quotient_ceil(n_samples, work_group_size) * work_group_size;
+    size_t n_subgroups = global_size / preferred_work_group_size_multiple;
+
+    n_centroids_private_copies = std::min(n_subgroups, n_centroids_private_copies);
+
+    return n_centroids_private_copies;
+}
 
 template <typename T, typename indT, size_t preferred_work_group_size_multiple, size_t centroids_window_width_multiplier>
 sycl::event
@@ -16,10 +41,8 @@ lloyd_single_step(
     size_t n_samples,
     size_t n_features,
     size_t n_clusters,
-    bool return_assignments,
-    size_t global_mem_cache_size,
     size_t centroids_window_height,
-    double centroids_private_copies_max_cache_occupancy,
+    size_t n_centroids_private_copies,
     size_t work_group_size,
     // ===================
     const T *X_t,                      // IN READ-ONLY  (n_features, n_samples)
@@ -41,23 +64,15 @@ lloyd_single_step(
     size_t n_windows_for_feature = quotient_ceil(n_features, centroids_window_height);
 
     size_t global_size = quotient_ceil(n_samples, work_group_size) * work_group_size;
-    size_t n_subgroups = global_size / preferred_work_group_size_multiple;
 
-    size_t n_cluster_items = n_clusters * (n_features + 1);
-    size_t n_cluster_bytes = sizeof(T) * n_cluster_items;
-    size_t n_centroids_private_copies = static_cast<size_t>(
-        (global_mem_cache_size * centroids_private_copies_max_cache_occupancy) / n_cluster_bytes);
-
-    n_centroids_private_copies = std::min(n_subgroups, n_centroids_private_copies);
-
-    sycl::event e = 
+    sycl::event e =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
-            auto G = sycl::range<1>(
-                quotient_ceil(n_samples, work_group_size) * work_group_size
-            );
+            auto G = sycl::range<1>(global_size);
             auto L = sycl::range<1>(work_group_size);
+
+            sycl::stream out(1024, 256, cgh);
 
             // allocate SLM
             using slm_cwT = sycl::accessor<T, 2, sycl::access::mode::read_write, sycl::access::target::local>;
@@ -66,7 +81,7 @@ lloyd_single_step(
             using slm_l2hnT = sycl::accessor<T, 1, sycl::access::mode::read_write, sycl::access::target::local>;
             slm_l2hnT window_of_centroids_half_l2_norms(sycl::range<1>(window_n_centroids), cgh);
 
-            cgh.parallel_for<class lloyd_single_step_krn<T, preferred_work_group_size_multiple, centroids_window_width_multiplier>>(
+            cgh.parallel_for<class lloyd_single_step_krn<T, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier>>(
                 sycl::nd_range<1>(G, L),
                 [=](sycl::nd_item<1> it) {
                     size_t sample_idx = it.get_global_id(0);
@@ -120,7 +135,7 @@ lloyd_single_step(
 
                             constexpr bool acummulate_dot_product = true;
                             _acummulate_sum_of_ops<T, decltype(centroids_window), decltype(dot_products), acummulate_dot_product>(
-                                n_samples, 
+                                n_samples,
                                 n_features,
                                 centroids_window_height,
                                 window_n_centroids,
@@ -144,50 +159,53 @@ lloyd_single_step(
                             min_idx,
                             min_sample_pseudo_inertia,
                             window_of_centroids_half_l2_norms,
-                            dot_products
+                            dot_products.data()
                         );
 
                         it.barrier(sycl::access::fence_space::local_space);
 
-                        min_idx = closest.template get<0>();
-                        min_sample_pseudo_inertia = closest.template get<1>();
+                        min_idx = closest.first;
+                        min_sample_pseudo_inertia = closest.second;
                     }
 
                     if (sample_idx < n_samples) {
                         assignments_idx[sample_idx] = min_idx;
-                    }
 
-                    T weight = sample_weights[sample_idx];
+                        T weight = sample_weights[sample_idx];
 
-                    size_t privatization_idx = (
-                        sample_idx / preferred_work_group_size_multiple
-                    ) % n_centroids_private_copies;
+                        size_t privatization_idx = (
+                            sample_idx / preferred_work_group_size_multiple
+                        ) % n_centroids_private_copies;
 
-                    auto atomic_cluser_size = 
-                    sycl::atomic_ref<
-                        T,
-                        sycl::memory_order::relaxed,
-                        sycl::memory_scope::device,
-                        sycl::access::address_space::global_space>(
-                            cluster_sizes_private_copies[privatization_idx * n_clusters + min_idx]
-                        );
-                    
-                    atomic_cluser_size += weight;
+                        auto atomic_cluser_size =
+                        sycl::atomic_ref<
+                            T,
+                            sycl::memory_order::relaxed,
+                            sycl::memory_scope::device,
+                            sycl::access::address_space::global_space>(
+                                cluster_sizes_private_copies[privatization_idx * n_clusters + min_idx]
+                            );
 
-                    auto atomic_coord = 
-                    sycl::atomic_ref<
-                        T,
-                        sycl::memory_order::relaxed,
-                        sycl::memory_scope::device,
-                        sycl::access::address_space::global_space>(
-                            new_centroids_t_private_copies[
-                                privatization_idx * n_clusters + min_idx
-                            ]
-                        );
-                    for(size_t feature_idx = 0; feature_idx < n_features; ++feature_idx ) {
-                        atomic_coord += X_t[feature_idx * n_samples + sample_idx ] * weight;
+                        atomic_cluser_size += weight;
+
+                        // new_centroids_t_private_copies  (n_copies, n_features, n_clusters)
+                        size_t _offset = privatization_idx * n_features * n_clusters + min_idx;
+                        for(size_t feature_idx = 0; feature_idx < n_features; ++feature_idx ) {
+                            auto atomic_coord =
+                            sycl::atomic_ref<
+                                T,
+                                sycl::memory_order::relaxed,
+                                sycl::memory_scope::device,
+                                sycl::access::address_space::global_space>(
+                                    new_centroids_t_private_copies[_offset + feature_idx * n_clusters]
+                                );
+
+                            atomic_coord += X_t[feature_idx * n_samples + sample_idx ] * weight;
+                        }
                     }
                 }
             );
         });
+
+    return e;
 }
