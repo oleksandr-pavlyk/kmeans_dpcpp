@@ -447,11 +447,8 @@ def test_lloyd_single_step():
         rtol = np.finfo(dataT).resolution
     )
 
-    expected_new_centroid_t = np.reshape(Xnp_t, (n_features, cloud_size, n_clusters)).sum(axis=1)
+    expected_new_centroid_t = np.reshape(Xnp_t, (n_features, n_clusters, cloud_size)).sum(axis=-1)
     actual_new_centroid_t = np.sum(dpt.asnumpy(new_centroids_t_private_copies), axis=0)
-
-    print(expected_new_centroid_t)
-    print(actual_new_centroid_t)
 
     assert np.allclose(
         expected_new_centroid_t,

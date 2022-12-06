@@ -1,0 +1,5 @@
+.vscode/
+__pycache__/
+*~
+kmeans_dpcpp.egg-info/
+kmeans_dpcpp/_kmeans_dpcpp.cpython*.so
