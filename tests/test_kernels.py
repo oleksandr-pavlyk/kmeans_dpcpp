@@ -455,3 +455,61 @@ def test_lloyd_single_step():
         actual_new_centroid_t,
         rtol = np.finfo(dataT).resolution
     )
+
+
+def test_kmeans_lloyd_driver():
+    # kmeans_lloyd_driver(
+    #    X_t, sample_weight, init_centroids_t, assignment_ids, res_centroids_t, 
+    #    tol, verbose, max_iters, centroids_window_height, work_group_size, 
+    #    centroids_private_copies_max_cache_occupancy,
+    #    sycl_queue, depends=[]
+    # )
+    dataT = dpt.float32
+    indT = dpt.int32
+
+    cloud_size = 32
+
+    ps = np.array([
+        [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
+    ], dtype=dataT)
+    rs = np.random.default_rng(seed=12345)
+    Xnp = np.concatenate([
+        rs.normal(0, 0.1, size=(cloud_size,3)).astype(dataT) + p for p in ps
+    ], axis=0)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+    Cnt = np.ascontiguousarray(ps.T)
+
+    Xt = dpt.asarray(Xnp_t, dtype=dataT)
+    n_features, n_samples = Xt.shape
+    assert n_features == 3
+
+    n_clusters = ps.shape[0]
+    assert Xt.flags.c_contiguous
+    init_centroids_t = dpt.asarray(Cnt, dtype=dataT)
+    assert init_centroids_t.flags.c_contiguous
+
+    res_centroids_t = dpt.empty_like(init_centroids_t)
+    sample_weight = dpt.ones(n_samples, dtype=dataT)
+    assignment_ids = dpt.empty(n_samples, dtype=indT)
+
+    q = Xt.sycl_queue
+
+    tol = 1e-6
+    max_iters = 255
+    verbosity=False
+    centroids_window_height = 8
+    work_group_size = 128
+    centroids_private_copies_max_cache_occupancy = 0.7
+
+    n_iters_, total_inertia = kdp.kmeans_lloyd_driver(
+        Xt, sample_weight, init_centroids_t, assignment_ids, res_centroids_t,
+        tol, verbosity, max_iters, centroids_window_height, work_group_size,
+        centroids_private_copies_max_cache_occupancy, 
+        q
+    )
+
+    expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
+    assert np.array_equal(expected_ids, dpt.asnumpy(assignment_ids))
+
+    assert n_iters_ < max_iters
+    assert n_iters_ == 2
