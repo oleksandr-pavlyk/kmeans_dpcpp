@@ -43,6 +43,18 @@ bool is_2d(const dpctl::tensor::usm_ndarray &ar) { return (2 == ar.get_ndim()); 
 bool is_3d(const dpctl::tensor::usm_ndarray &ar) { return (3 == ar.get_ndim()); }
 bool is_0d(const dpctl::tensor::usm_ndarray &ar) { return 1 == ar.get_size(); }
 
+template <std::size_t num>
+bool queues_are_compatible(sycl::queue exec_q,
+			   const ::dpctl::tensor::usm_ndarray (&arrs)[num])
+{
+    for (std::size_t i = 0; i < num; ++i) {
+        if (exec_q != arrs[i].get_queue()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 
 /*! @brief Evaluates X /= y */
 std::pair<sycl::event, sycl::event>
@@ -61,7 +73,7 @@ py_broadcast_divide(
     throw py::value_error("Array dimensions of arguments are not consistent, X.shape[1] != y.shape[0]");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {X.get_queue(), y.get_queue()})) {
+  if (!queues_are_compatible(q, {X, y})) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
 
@@ -105,7 +117,7 @@ py_half_l2_norm_squared(
     throw py::value_error("Array dimensions of arguments are not consistent, X.shape[1] != y.shape[0]");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {X.get_queue(), y.get_queue()})) {
+  if (!queues_are_compatible(q, {X, y})) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
 
@@ -188,13 +200,13 @@ py_reduce_centroids_data(
     throw py::value_error("All array arguments must be C-contiguous");
   }
 
-  if (! ::dpctl::utils::queues_are_compatible(q, {
-                                                  cluster_sizes_private_copies.get_queue(),
-                                                  centroids_t_private_copies.get_queue(),
-                                                  out_cluster_sizes.get_queue(),
-                                                  out_centroids_t.get_queue(),
-                                                  out_empty_clusters_list.get_queue(),
-                                                  out_n_empty_clusters.get_queue()
+  if (! queues_are_compatible(q, {
+				  cluster_sizes_private_copies,
+				  centroids_t_private_copies,
+				  out_cluster_sizes,
+				  out_centroids_t,
+				  out_empty_clusters_list,
+				  out_n_empty_clusters
       })) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
@@ -284,7 +296,7 @@ py_compute_threshold(
     throw py::value_error("Data types of arguments must be the same");
   }
 
-  if (! ::dpctl::utils::queues_are_compatible(q, {data.get_queue(), threshold.get_queue()})) {
+  if (! queues_are_compatible(q, {data, threshold})) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
 
@@ -304,7 +316,7 @@ py_compute_threshold(
       n_samples, data.get_data<dataT>(), topk,
       threshold.get_data<dataT>(), depends);
   } else if (data_typenum == api.UAR_DOUBLE_) {
-    using dataT = float;
+    using dataT = double;
     comp_ev = compute_threshold_kernel<dataT>(q,
       n_samples, data.get_data<dataT>(), topk,
       threshold.get_data<dataT>(), depends);
@@ -365,11 +377,11 @@ py_select_samples_far_from_centroid(
       throw py::value_error("Output array must have the same elemental data type");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {
-    distance_to_centroid.get_queue(),
-    threshold.get_queue(), selected_samples_idx.get_queue(),
-    n_selected_gt_threshold.get_queue(),
-    n_selected_eq_threshold.get_queue()
+  if (!queues_are_compatible(q, {
+    distance_to_centroid,
+    threshold, selected_samples_idx,
+    n_selected_gt_threshold,
+    n_selected_eq_threshold
   })) { throw py::value_error("Execution queue is not compatible with allocation queues"); }
 
   auto &api = ::dpctl::detail::dpctl_capi::get();
@@ -476,11 +488,11 @@ py_relocate_empty_clusters(
     throw py::value_error("n_empty_clusters must be non-zero.");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {
-        X_t.get_queue(), sample_weights.get_queue(),
-        assignment_id.get_queue(), empty_clusters_list.get_queue(),
-        sq_dist_to_nearest_centroid.get_queue(), centroid_t.get_queue(),
-        cluster_sizes.get_queue(), per_sample_inertia.get_queue()
+  if (!queues_are_compatible(q, {
+        X_t, sample_weights,
+        assignment_id, empty_clusters_list,
+        sq_dist_to_nearest_centroid, centroid_t,
+        cluster_sizes, per_sample_inertia
         }))
   {
     throw py::value_error("Execution queue is not compatible with allocation queues.");
@@ -598,7 +610,7 @@ py_compute_centroid_shifts_squared_kernel(
     throw py::value_error("Arguments must be C-contiguous arrays");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {new_centroid_t.get_queue(), old_centroid_t.get_queue(), centroid_shifts.get_queue()})) {
+  if (!queues_are_compatible(q, {new_centroid_t, old_centroid_t, centroid_shifts})) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
 
@@ -672,7 +684,7 @@ py_compute_distances(
     throw py::value_error("Input array dimensions are not consistant");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {X_t.get_queue(), centroid_t.get_queue(), euclidean_distances_t.get_queue()})) {
+  if (!queues_are_compatible(q, {X_t, centroid_t, euclidean_distances_t})) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
 
@@ -752,7 +764,7 @@ py_assignment(
     throw py::value_error("Inputs have inconsistent dimensions.");
   }
 
-  if(!dpctl::utils::queues_are_compatible(q, {X_t.get_queue(), centroid_t.get_queue(), centroids_half_l2_norm.get_queue(), assignment_id.get_queue()})) {
+  if(!queues_are_compatible(q, {X_t, centroid_t, centroids_half_l2_norm, assignment_id})) {
     throw py::value_error("Execution queue is incompatible with allocation queues.");
   }
 
@@ -839,9 +851,9 @@ py_compute_inertia(
     throw py::value_error("All input arrays must be C-contiguous");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {
-        X_t.get_queue(), sample_weight.get_queue(), centroid_t.get_queue(),
-        assignment_id.get_queue(), per_sample_inertia.get_queue()
+  if (!queues_are_compatible(q, {
+        X_t, sample_weight, centroid_t,
+        assignment_id, per_sample_inertia
       })
   ) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
@@ -930,7 +942,7 @@ py_reduce_vector_blocking(
     throw py::value_error("Expecting 1D contiguous vector.");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {data.get_queue()})) {
+  if (!queues_are_compatible(q, {data})) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
 
@@ -1000,10 +1012,10 @@ py_fused_lloyd_single_step(
     throw py::value_error("Unexpected array dimensions");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {
-    X_t.get_queue(), sample_weight.get_queue(), centroids_t.get_queue(),
-    centroids_half_l2_norm.get_queue(), assignments_idx.get_queue(),
-    new_centroids_t_private_copies.get_queue(), cluster_sizes_private_copies.get_queue()
+  if (!queues_are_compatible(q, {
+    X_t, sample_weight, centroids_t,
+    centroids_half_l2_norm, assignments_idx,
+    new_centroids_t_private_copies, cluster_sizes_private_copies
   })) {
     throw py::value_error("Execution queue is not compatible with allocation queues.");
   }
@@ -1152,9 +1164,9 @@ py_kmeans_lloyd_driver(
     throw py::value_error("All input arrays must be C-contiguous");
   }
 
-  if (!dpctl::utils::queues_are_compatible(q, {
-    X_t.get_queue(), sample_weight.get_queue(), init_centroids_t.get_queue(),
-    assignment_id.get_queue(), res_centroids_t.get_queue()
+  if (!queues_are_compatible(q, {
+    X_t, sample_weight, init_centroids_t,
+    assignment_id, res_centroids_t
   })) {
     throw py::value_error("Execution queue is not compatible with allocation queues");
   }
