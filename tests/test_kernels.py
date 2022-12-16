@@ -3,6 +3,8 @@ import dpctl
 import dpctl.tensor as dpt
 import kmeans_dpcpp as kdp
 
+from numpy.testing import assert_allclose, assert_array_equal
+
 import numpy as np
 
 def test_broadcast_divide():
@@ -16,7 +18,7 @@ def test_broadcast_divide():
     X_np = dpt.asnumpy(X)
     X_expected = np.full((16, 5), np.array([27, 9, 3, 9, 27], dtype=dataT))
     tol = np.finfo(X.dtype).resolution
-    assert np.allclose( X_np, X_expected, rtol=tol )
+    assert_allclose( X_np, X_expected, rtol=tol)
 
 
 def test_half_l2_norm_squared():
@@ -34,7 +36,7 @@ def test_half_l2_norm_squared():
     y_np = dpt.asnumpy(y)
     y_expected = np.array([6., 6., 6., 6., 1.5, 1.5], dtype=dataT)
     tol = np.finfo(X.dtype).resolution
-    assert np.allclose( y_np, y_expected, rtol=tol )
+    assert_allclose( y_np, y_expected, rtol=tol)
 
 
 def test_reduce_centroids_data():
@@ -115,10 +117,10 @@ def test_reduce_centroids_data_empty():
     ht.wait()
 
     assert int(out_n_empty_clusters) == 1
-    assert np.array_equal(dpt.asnumpy(out_empty_clusters_list), np.array([3,canary_v,canary_v,canary_v], dtype=indT))
-    assert np.allclose(
+    assert_array_equal(dpt.asnumpy(out_empty_clusters_list), np.array([3,canary_v,canary_v,canary_v], dtype=indT))
+    assert_allclose(
         dpt.asnumpy(out_centroids_t), Xnp.sum(axis=0), rtol = np.finfo(dataT).resolution)
-    assert np.allclose(
+    assert_allclose(
         dpt.asnumpy(out_cluster_sizes), dpt.asnumpy(cluster_sizes_private_copies).sum(axis=0))
 
 
@@ -230,9 +232,9 @@ def test_relocate_empty_clusters():
     expected_per_sample_inertia = np.copy(sq_dist_to_nearest_centroid_np)
     expected_per_sample_inertia[5] = 0
 
-    assert np.allclose(expected_cluster_sizes, dpt.asnumpy(cluster_sizes), rtol=np.finfo(dataT).resolution)
-    assert np.allclose(expected_updated_centroid_t, dpt.asnumpy(centroid_t), rtol=np.finfo(dataT).resolution)
-    assert np.allclose(expected_per_sample_inertia, dpt.asnumpy(per_sample_inertia), rtol=np.finfo(dataT).resolution)
+    assert_allclose(expected_cluster_sizes, dpt.asnumpy(cluster_sizes), rtol=np.finfo(dataT).resolution)
+    assert_allclose(expected_updated_centroid_t, dpt.asnumpy(centroid_t), rtol=np.finfo(dataT).resolution)
+    assert_allclose(expected_per_sample_inertia, dpt.asnumpy(per_sample_inertia), rtol=np.finfo(dataT).resolution)
 
 
 def test_centroid_shifts():
@@ -288,7 +290,7 @@ def test_compute_centoid_to_sample_distances():
         np.sum(np.square( Xnp_t[:, np.newaxis, :] - Cnt[:, :, np.newaxis] ), axis=0)
     )
 
-    assert np.allclose(
+    assert_allclose(
         dpt.asnumpy(dm),
         dm_ref,
         rtol = np.finfo(dataT).resolution
@@ -333,7 +335,7 @@ def test_assignment():
 
     expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
 
-    assert np.array_equal(expected_ids, dpt.asnumpy(assigned_id))
+    assert_array_equal(expected_ids, dpt.asnumpy(assigned_id))
 
 
 def test_compute_inertia():
@@ -375,7 +377,7 @@ def test_compute_inertia():
     expected_per_sample_inertia = \
         np.sum(np.square(Xnp_t - np.take_along_axis(Cnt, _ids[np.newaxis,:], axis=1)), axis=0)
 
-    assert np.allclose(
+    assert_allclose(
         expected_per_sample_inertia,
         dpt.asnumpy(per_sample_inertia),
         rtol=np.finfo(dataT).resolution
@@ -437,11 +439,11 @@ def test_lloyd_single_step():
     )
     ht.wait()
 
-    assert np.array_equal(_ids, dpt.asnumpy(assignment_id))
+    assert_array_equal(_ids, dpt.asnumpy(assignment_id))
 
     expected_cluster_sizes = np.sum(dpt.asnumpy(cluster_sizes_private_copies), axis=0)
 
-    assert np.allclose(
+    assert_allclose(
         expected_cluster_sizes,
         np.full((n_clusters, ), cloud_size, dtype=dataT),
         rtol = np.finfo(dataT).resolution
@@ -450,7 +452,7 @@ def test_lloyd_single_step():
     expected_new_centroid_t = np.reshape(Xnp_t, (n_features, n_clusters, cloud_size)).sum(axis=-1)
     actual_new_centroid_t = np.sum(dpt.asnumpy(new_centroids_t_private_copies), axis=0)
 
-    assert np.allclose(
+    assert_allclose(
         expected_new_centroid_t,
         actual_new_centroid_t,
         rtol = np.finfo(dataT).resolution
@@ -509,7 +511,7 @@ def test_kmeans_lloyd_driver():
     )
 
     expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
-    assert np.array_equal(expected_ids, dpt.asnumpy(assignment_ids))
+    assert_array_equal(expected_ids, dpt.asnumpy(assignment_ids))
 
     assert n_iters_ < max_iters
     assert n_iters_ == 2
