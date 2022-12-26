@@ -38,7 +38,7 @@ compute_distances(
             auto L = sycl::range<1>( work_group_size );
 
             // allocate SLM
-            using slmT = sycl::accessor<T, 2, sycl::access::mode::read_write, sycl::access::target::local>;
+            using slmT = sycl::local_accessor<T, 2>;
             slmT centroids_window(sycl::range<2>(centroids_window_height, (window_n_centroids + 1)), cgh);
 
             cgh.parallel_for<class euclidean_distance_krn<T, preferred_work_group_size_multiplier, centroids_window_width_multiplier>>(

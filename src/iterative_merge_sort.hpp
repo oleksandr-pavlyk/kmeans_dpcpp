@@ -239,9 +239,7 @@ iterative_merge_sort(
                     Sorter::template memory_required<T>(
                         sycl::memory_scope::work_group, local_range);
 
-                sycl::accessor<
-                    std::byte, 1, sycl::access::mode::read_write,
-                    sycl::access::target::local>
+                sycl::local_accessor<std::byte, 1>
                     scratch({temp_memory_size}, cgh);
 
                 if (n % lws == 0)

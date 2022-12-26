@@ -75,10 +75,10 @@ lloyd_single_step(
             sycl::stream out(1024, 256, cgh);
 
             // allocate SLM
-            using slm_cwT = sycl::accessor<T, 2, sycl::access::mode::read_write, sycl::access::target::local>;
+            using slm_cwT = sycl::local_accessor<T, 2>;
             slm_cwT centroids_window(sycl::range<2>(centroids_window_height, (window_n_centroids + 1)), cgh);
 
-            using slm_l2hnT = sycl::accessor<T, 1, sycl::access::mode::read_write, sycl::access::target::local>;
+            using slm_l2hnT = sycl::local_accessor<T, 1>;
             slm_l2hnT window_of_centroids_half_l2_norms(sycl::range<1>(window_n_centroids), cgh);
 
             cgh.parallel_for<class lloyd_single_step_krn<T, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier>>(
