@@ -146,10 +146,9 @@ lloyd_single_step(
                                 centroids_window,
                                 dot_products
                             );
+                            first_feature_idx += centroids_window_height;
 
                             it.barrier(sycl::access::fence_space::local_space);
-
-                            first_feature_idx += centroids_window_height;
                         }
 
                         auto closest = _update_closest_centroid(
@@ -161,6 +160,7 @@ lloyd_single_step(
                             window_of_centroids_half_l2_norms,
                             dot_products.data()
                         );
+                        first_centroid_idx += window_n_centroids;
 
                         it.barrier(sycl::access::fence_space::local_space);
 

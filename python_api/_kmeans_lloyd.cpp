@@ -61,6 +61,7 @@ std::pair<sycl::event, sycl::event>
 py_broadcast_divide(
   dpctl::tensor::usm_ndarray X,
   dpctl::tensor::usm_ndarray y,
+  size_t work_group_size,
   sycl::queue q,
   const std::vector<sycl::event> &depends={})
 {
@@ -86,12 +87,14 @@ py_broadcast_divide(
 
   sycl::event comp_ev;
   if (y_typenum == api.UAR_FLOAT_) {
-    comp_ev = broadcast_division_kernel<float>(
-              q, X.get_shape(0), X.get_shape(1), 32, X.get_data<float>(), y.get_data<float>(), depends
+    using dataT = float;
+    comp_ev = broadcast_division_kernel<dataT>(
+              q, X.get_shape(0), X.get_shape(1), work_group_size, X.get_data<dataT>(), y.get_data<dataT>(), depends
            );
   } else if (y_typenum == api.UAR_DOUBLE_) {
+    using dataT = double;
     comp_ev = broadcast_division_kernel<double>(
-              q, X.get_shape(0), X.get_shape(1), 32, X.get_data<double>(), y.get_data<double>(), depends
+              q, X.get_shape(0), X.get_shape(1), work_group_size, X.get_data<dataT>(), y.get_data<dataT>(), depends
            );
   } else {
     throw py::value_error("Unsupported elemental data type. Expecting single or double precision floating point numbers");
@@ -106,6 +109,7 @@ std::pair<sycl::event, sycl::event>
 py_half_l2_norm_squared(
   dpctl::tensor::usm_ndarray X,
   dpctl::tensor::usm_ndarray y,
+  size_t work_group_size,
   sycl::queue q,
   const std::vector<sycl::event> &depends={})
 {
@@ -130,12 +134,14 @@ py_half_l2_norm_squared(
 
   sycl::event comp_ev;
   if (y_typenum == api.UAR_FLOAT_) {
-    comp_ev = half_l2_norm_kernel<float>(
-              q, X.get_shape(0), X.get_shape(1), 32, X.get_data<float>(), y.get_data<float>(), depends
+    using dataT = float;
+    comp_ev = half_l2_norm_kernel<dataT>(
+              q, X.get_shape(0), X.get_shape(1), work_group_size, X.get_data<dataT>(), y.get_data<dataT>(), depends
            );
   } else if (y_typenum == api.UAR_DOUBLE_) {
-    comp_ev = half_l2_norm_kernel<double>(
-              q, X.get_shape(0), X.get_shape(1), 32, X.get_data<double>(), y.get_data<double>(), depends
+    using dataT = double;
+    comp_ev = half_l2_norm_kernel<dataT>(
+              q, X.get_shape(0), X.get_shape(1), work_group_size, X.get_data<dataT>(), y.get_data<dataT>(), depends
            );
   } else {
     throw py::value_error("Unsupported elemental data type. Expecting single or double precision floating point numbers");
@@ -1061,8 +1067,8 @@ py_fused_lloyd_single_step(
       cluster_sizes_private_copies.get_data<dataT>(),
       depends
     );
-  } else if (dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT32_) {
-    using dataT = float;
+  } else if (dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT32_) {
+    using dataT = double;
     using indT = std::int32_t;
 
     comp_ev = lloyd_single_step<dataT, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier>(
@@ -1075,8 +1081,8 @@ py_fused_lloyd_single_step(
       cluster_sizes_private_copies.get_data<dataT>(),
       depends
     );
-  } else if (dataT_typenum == api.UAR_FLOAT_ && indT_typenum == api.UAR_INT64_) {
-    using dataT = float;
+  } else if (dataT_typenum == api.UAR_DOUBLE_ && indT_typenum == api.UAR_INT64_) {
+    using dataT = double;
     using indT = std::int64_t;
 
     comp_ev = lloyd_single_step<dataT, indT, preferred_work_group_size_multiple, centroids_window_width_multiplier>(
@@ -1272,7 +1278,7 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
     "broadcast_divide", &py_broadcast_divide,
           "broadcast_divide(divident=src, divisor=dst, sycl_queue=q, depends=[]) evaluates "
     "`src /= dst` for matrix src and vector dst",
-          py::arg("divident"), py::arg("divisor"),
+          py::arg("divident"), py::arg("divisor"), py::arg("work_group_size"),
           py::arg("sycl_queue"), py::arg("depends")=py::list()
   );
   m.def(
@@ -1280,6 +1286,7 @@ PYBIND11_MODULE(_kmeans_dpcpp, m) {
           "half_l2_norm_squared(centroids=X, centroids_half_l2_norm_squared=y, sycl_queue=q, depends=[]) "
     "computes row-wise half of norm squared of X and places it in y",
           py::arg("centroids"), py::arg("centroids_half_l2_norm_squared"),
+          py::arg("work_group_size"),
           py::arg("sycl_queue"), py::arg("depends") = py::list()
   );
 

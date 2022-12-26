@@ -21,7 +21,7 @@ assignment(
     const T* X_t,                    // IN READ-ONLY   (n_features, n_samples, )
     const T* centroids_t,            // IN READ-ONLY   (n_features, n_clusters, )
     const T *centroids_half_l2_norm, // IN             (n_clusters, )
-    indT *assignment_idx,          // OUT            (n_samples, )
+    indT *assignment_idx,            // OUT            (n_samples, )
     const std::vector<sycl::event> &depends={}
 ) {
 
@@ -76,6 +76,7 @@ assignment(
                             window_of_centroids_half_l2_norms,
                             dot_products
                         );
+                        it.barrier(sycl::access::fence_space::local_space);
 
                         size_t loading_centroid_idx = first_centroid_idx + window_loading_centroid_idx;
 
@@ -113,9 +114,9 @@ assignment(
                                 dot_products
                             );
 
-                            it.barrier(sycl::access::fence_space::local_space);
-
                             first_feature_idx += centroids_window_height;
+
+                            it.barrier(sycl::access::fence_space::local_space);
                         }
 
                         auto closest = _update_closest_centroid<T, decltype(window_of_centroids_half_l2_norms)>(
@@ -127,6 +128,7 @@ assignment(
                             window_of_centroids_half_l2_norms,
                             dot_products.data()
                         );
+                        first_centroid_idx += window_n_centroids;
 
                         it.barrier(sycl::access::fence_space::local_space);
 
