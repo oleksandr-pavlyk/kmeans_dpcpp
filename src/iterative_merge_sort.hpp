@@ -214,7 +214,7 @@ iterative_merge_sort(
     size_t lws = std::min(
         dev.get_info<sycl::info::device::max_work_group_size>(),
         dev.get_info<sycl::info::device::local_mem_size>() / (2 * sizeof(T))
-    );
+    ) / 2;
     constexpr size_t segment_size = 4;
 
     lws = greatest_power_of_two_no_greater_than(lws / segment_size) * segment_size;
@@ -234,7 +234,7 @@ iterative_merge_sort(
                     sycl::ext::oneapi::experimental::default_sorter<Comparer>;
 		
                 // calculate required local memory size
-		            // MUST pass range object, not an integer.
+                // MUST pass range object, not an integer.
                 size_t temp_memory_size =
                     Sorter::template memory_required<T>(
                         sycl::memory_scope::work_group, local_range);
