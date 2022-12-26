@@ -20,7 +20,7 @@ void _load_window_of_centroids_and_features(
     size_t window_loading_centroid_idx,
     size_t window_loading_feature_offset,
     T const *current_centroids_t,
-    slmT centroids_window
+    slmT &centroids_window
 ) {
     constexpr T zero(0);
 
@@ -62,7 +62,7 @@ void _initialize_results(
     size_t window_n_centroids,
     size_t window_n_features,
     // ===========================
-    resT results
+    resT &results                // OUT
 ) {
     constexpr T zero(0);
     for(size_t i = 0; i < window_n_centroids; ++i) {
@@ -83,24 +83,20 @@ void _initialize_window_of_centroids(
     size_t local_work_id,
     size_t first_centroid_idx,
     const T *centroids_half_l2_norm,
-    wcT window_of_centroids_half_l2_norm,
-    resT results
+    wcT &window_of_centroids_half_l2_norm,    // OUT
+    resT &results                             // OUT
 ) {
     _initialize_results<T>(
         n_clusters, n_features, work_group_size, window_n_centroids, window_n_features,
         results
     );
 
-    constexpr T inf = std::numeric_limits<T>::infinity();
-
     // The first `window_n_centroids` work items cooperate on loading the
     // values of centroids_half_l2_norm relevant to current window. Each work
     // item loads one single value.
-    size_t half_l2_norm_loading_idx = first_centroid_idx + local_work_id;
     if (local_work_id < window_n_centroids) {
-        bool in_bound = half_l2_norm_loading_idx < n_clusters;
-        T l2_norm = (in_bound) ? centroids_half_l2_norm[half_l2_norm_loading_idx] : inf;
-        window_of_centroids_half_l2_norm[local_work_id] = l2_norm;
+        size_t half_l2_norm_loading_idx = first_centroid_idx + local_work_id;
+        window_of_centroids_half_l2_norm[local_work_id] = centroids_half_l2_norm[half_l2_norm_loading_idx];
     }
 }
 
