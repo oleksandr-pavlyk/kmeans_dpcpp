@@ -88,8 +88,8 @@ def test_reduce_centroids_data_fp32():
     n_features = 2
     n_clusters = 4
 
-    dataT = np.dtype('f4')
-    indT = np.dtype('i4')
+    dataT = np.float32
+    indT = np.int32
 
     cluster_sizes_private_copies = dpt.asarray(
         [ [ 2, 1, 3, 1],
@@ -105,17 +105,18 @@ def test_reduce_centroids_data_fp32():
     out_n_empty_clusters = dpt.zeros((1,), dtype=indT)
 
     q = cluster_sizes_private_copies.sycl_queue
-    ht, _, = kdp.reduce_centroids_data(
+    ht, ev = kdp.reduce_centroids_data(
         cluster_sizes_private_copies,  # (n_copies, n_clusters)
         centroids_t_private_copies,    # (n_copies, n_features, n_clusters,)
         out_cluster_sizes,             # (n_clusters, )
         out_centroids_t,               # (n_features, n_clusters,)
         out_empty_clusters_list,       # (n_clusters,)
         out_n_empty_clusters,          # (1,)
-        work_group_size=256,
+        work_group_size=32,
         sycl_queue=q
     )
     ht.wait()
+    ev.wait()
 
     assert int(out_n_empty_clusters) == 0
     assert np.array_equal(dpt.asnumpy(out_empty_clusters_list), np.full(n_clusters, canary_v, dtype=indT))
@@ -644,7 +645,51 @@ def test_compute_centroid_to_sample_distances_fp64():
 def test_assignment_fp32():
     dataT = np.float32
     indT = np.int32
-    cloud_size = 32
+    cloud_size = 1734
+
+    ps = np.array([
+        [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
+    ], dtype=dataT)
+    Xnp = np.concatenate([
+        np.random.normal(0, 0.1, size=(cloud_size,3)).astype(dataT) + p for p in ps
+    ], axis=0)
+    Xnp_t = np.ascontiguousarray(Xnp.T)
+    Cnt = np.ascontiguousarray(ps.T)
+
+    q_alloc = dpctl.SyclQueue() #property="in_order")
+
+    Xt = dpt.asarray(Xnp_t, dtype=dataT, sycl_queue=q_alloc)
+    assert Xt.flags.c_contiguous
+    centroid_t = dpt.asarray(Cnt, dtype=dataT, sycl_queue=q_alloc)
+    assert centroid_t.flags.c_contiguous
+
+    hl2n = dpt.empty(centroid_t.shape[1], dtype=dataT, sycl_queue=q_alloc)
+    assigned_id = dpt.empty(Xt.shape[1], dtype=indT, sycl_queue=q_alloc)
+    q = Xt.sycl_queue
+
+    ht1, e_hl2n = kdp.half_l2_norm_squared(centroid_t, hl2n,
+        work_group_size=256, sycl_queue=q)
+
+    ht2, _ = kdp.assignment(
+        Xt, centroid_t, hl2n, assigned_id,
+        centroids_window_height = 8,
+        work_group_size=256,
+        sycl_queue=q,
+        depends=[e_hl2n,]
+    )
+
+    ht1.wait()
+    ht2.wait()
+
+    expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
+
+    assert_array_equal(expected_ids, dpt.asnumpy(assigned_id))
+
+
+def test_assignment_fp32_duplicate():
+    dataT = np.float32
+    indT = np.int32
+    cloud_size = 1734
 
     ps = np.array([
         [1,1,1], [1,1,-1], [1,-1,1], [-1,1,1], [1,-1,-1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]
