@@ -11,7 +11,7 @@ template <typename T, typename slmT>
 void _load_window_of_centroids_and_features(
     size_t n_clusters,
     size_t n_features,
-    size_t work_group_size, 
+    size_t work_group_size,
     size_t window_n_centroids,
     size_t window_n_features,
     // =====================================
@@ -40,14 +40,14 @@ void _load_window_of_centroids_and_features(
 
         bool in_bound = (loading_feature_idx < n_features && loading_centroid_idx < n_clusters);
         T value = (
-            (in_bound) 
-            ? current_centroids_t[loading_feature_idx * n_clusters + loading_centroid_idx] 
+            (in_bound)
+            ? current_centroids_t[loading_feature_idx * n_clusters + loading_centroid_idx]
             : zero
         );
 
         auto cw_id = sycl::id<2>(window_loading_feature_idx, window_loading_centroid_idx);
         centroids_window[cw_id] = value;
-        centroid_window_first_loading_feature_idx += 
+        centroid_window_first_loading_feature_idx +=
             n_window_features_per_work_group;
     }
 
@@ -58,7 +58,7 @@ template <typename T, typename resT>
 void _initialize_results(
     size_t n_clusters,
     size_t n_features,
-    size_t work_group_size, 
+    size_t work_group_size,
     size_t window_n_centroids,
     size_t window_n_features,
     // ===========================
@@ -76,7 +76,7 @@ template <typename T, typename wcT, typename resT>
 void _initialize_window_of_centroids(
     size_t n_clusters,
     size_t n_features,
-    size_t work_group_size, 
+    size_t work_group_size,
     size_t window_n_centroids,
     size_t window_n_features,
     // ================================
@@ -94,17 +94,17 @@ void _initialize_window_of_centroids(
     // The first `window_n_centroids` work items cooperate on loading the
     // values of centroids_half_l2_norm relevant to current window. Each work
     // item loads one single value.
-    if (local_work_id < window_n_centroids) {
-        size_t half_l2_norm_loading_idx = first_centroid_idx + local_work_id;
+    size_t half_l2_norm_loading_idx = first_centroid_idx + local_work_id;
+    if (half_l2_norm_loading_idx < n_clusters) {
         window_of_centroids_half_l2_norm[local_work_id] = centroids_half_l2_norm[half_l2_norm_loading_idx];
     }
 }
 
 template <typename T, typename cwT, typename resT, bool acummulate_dot_product>
 void _acummulate_sum_of_ops(
-    size_t n_samples, 
-    size_t n_features, 
-    size_t window_n_features, 
+    size_t n_samples,
+    size_t n_features,
+    size_t window_n_features,
     size_t window_n_centroids,
     // ===========================
     size_t sample_idx,
@@ -147,7 +147,7 @@ std::pair<size_t, T> _update_closest_centroid(
     T min_sample_pseudo_inertia_ = min_sample_pseudo_inertia;
 
     for(size_t i = 0; i < window_n_centroids; ++i) {
-        T current_sample_pseudo_inertia = 
+        T current_sample_pseudo_inertia =
              window_of_centroids_half_l2_norms[i] - dot_products[i];
 
         bool update = (current_sample_pseudo_inertia < min_sample_pseudo_inertia_);
@@ -157,4 +157,3 @@ std::pair<size_t, T> _update_closest_centroid(
 
     return std::make_pair(min_idx_, min_sample_pseudo_inertia_);
 }
-
