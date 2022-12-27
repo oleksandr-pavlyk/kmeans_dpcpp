@@ -322,7 +322,7 @@ relocate_empty_clusters_kernel(
 )
 {
     // Alternative way to fix failure of test_relocate_empty_clusters
-    // sycl::event::wait(depends); 
+    // sycl::event::wait(depends);
 
     sycl::event res_ev =
         q.submit([&](sycl::handler &cgh) {
@@ -346,39 +346,41 @@ relocate_empty_clusters_kernel(
                     size_t relocated_idx = group_idx / n_work_groups_for_cluster;
                     size_t feature_idx = (group_idx - relocated_idx * n_work_groups_for_cluster) * work_group_size + item_idx;
 
-                    if (feature_idx >= n_features) return;
+                    if (feature_idx < n_features) {
+                        indT relocated_cluster_idx = empty_clusters_list[relocated_idx];
+                        indT n_selected_gt_threshold_ = n_selected_gt_threshold[0];
 
-                    indT relocated_cluster_idx = empty_clusters_list[relocated_idx];
-                    indT n_selected_gt_threshold_ = n_selected_gt_threshold[0];
+                        size_t index = (n_selected_gt_threshold_ == 0) ? (n_samples - 1) : (n_selected_gt_threshold_ - 1 - relocated_idx);
 
-		            size_t index = (n_selected_gt_threshold_ == 0) ? (n_samples - 1) : (n_selected_gt_threshold_ - 1 - relocated_idx);
-                    indT new_location_X_idx = samples_far_from_center[index];
-                    indT new_location_previous_assignment = assignment_id[new_location_X_idx];
+                        // new_location_X_idx - index of sample point that becomes a new centroid
+                        indT new_location_X_idx = samples_far_from_center[index];
+                        indT new_location_previous_assignment = assignment_id[new_location_X_idx];
 
-                    dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_X_idx];
-                    dataT new_location_weight = sample_weight[new_location_X_idx];
-                    dataT X_centroid_addend = new_centroid_value * new_location_weight;
+                        dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_X_idx];
+                        dataT new_location_weight = sample_weight[new_location_X_idx];
+                        dataT X_centroid_addend = new_centroid_value * new_location_weight;
 
-                    auto atomic_centroid_component_ref =
-                    sycl::atomic_ref<
-                            dataT,
-                            sycl::memory_order::relaxed,
-                            sycl::memory_scope::device,
-                            sycl::access::address_space::global_space>(centroids_t[feature_idx * n_clusters + new_location_previous_assignment]);
-
-                    atomic_centroid_component_ref -= X_centroid_addend;
-                    centroids_t[feature_idx * n_clusters + relocated_cluster_idx] = X_centroid_addend;
-
-                    if (feature_idx == 0) {
-                        per_sample_inertia[new_location_X_idx] = dataT(0);
-                        auto atomic_cluster_size_ref =
+                        auto atomic_centroid_component_ref =
                         sycl::atomic_ref<
                                 dataT,
                                 sycl::memory_order::relaxed,
                                 sycl::memory_scope::device,
-                                sycl::access::address_space::global_space>(cluster_sizes[new_location_previous_assignment]);
-                        atomic_cluster_size_ref -= new_location_weight;
-                        cluster_sizes[relocated_cluster_idx] = new_location_weight;
+                                sycl::access::address_space::global_space>(centroids_t[feature_idx * n_clusters + new_location_previous_assignment]);
+
+                        atomic_centroid_component_ref -= X_centroid_addend;
+                        centroids_t[feature_idx * n_clusters + relocated_cluster_idx] = X_centroid_addend;
+
+                        if (feature_idx == 0) {
+                            per_sample_inertia[new_location_X_idx] = dataT(0);
+                            auto atomic_cluster_size_ref =
+                            sycl::atomic_ref<
+                                    dataT,
+                                    sycl::memory_order::relaxed,
+                                    sycl::memory_scope::device,
+                                    sycl::access::address_space::global_space>(cluster_sizes[new_location_previous_assignment]);
+                            atomic_cluster_size_ref -= new_location_weight;
+                            cluster_sizes[relocated_cluster_idx] = new_location_weight;
+                        }
                     }
                 }
             );
@@ -407,8 +409,7 @@ relocate_empty_clusters(
     dataT *per_sample_inertia,                 // INOUT (n_sample, )
     const std::vector<sycl::event> &depends = {}
 ) {
-    size_t kth = n_samples - n_empty_clusters;
-
+    // size_t kth = n_samples - n_empty_clusters;
     // compute threshold = kth largest element in sq_dist_to_nearest_centroid
     dataT *threshold = sycl::malloc_device<dataT>(1, q);
 
@@ -455,11 +456,13 @@ relocate_empty_clusters(
             per_sample_inertia,                  // INOUT (n_samples,)
             centroids_t,                         // INOUT (n_features, n_clusters,)
             cluster_sizes,                       // INOUT (n_clusters,)
-            {select_samples_far_from_centroid_ev}
+            {select_samples_far_from_centroid_ev, compute_threshold_ev, n_selected_pop_ev}
         );
 
     // submit a host task to free temp USM-device allocation
     q.submit([&](sycl::handler &cgh) {
+        cgh.depends_on(compute_threshold_ev);
+        cgh.depends_on(select_samples_far_from_centroid_ev);
         cgh.depends_on(relocate_empty_cluster_ev);
         auto ctx = q.get_context();
 
