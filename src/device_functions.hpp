@@ -94,9 +94,12 @@ void _initialize_window_of_centroids(
     // The first `window_n_centroids` work items cooperate on loading the
     // values of centroids_half_l2_norm relevant to current window. Each work
     // item loads one single value.
-    size_t half_l2_norm_loading_idx = first_centroid_idx + local_work_id;
-    if (half_l2_norm_loading_idx < n_clusters) {
-        window_of_centroids_half_l2_norm[local_work_id] = centroids_half_l2_norm[half_l2_norm_loading_idx];
+    if (local_work_id < window_n_centroids) {
+        size_t half_l2_norm_loading_idx = first_centroid_idx + local_work_id;
+        window_of_centroids_half_l2_norm[local_work_id] =
+            (half_l2_norm_loading_idx < n_clusters) ?
+                centroids_half_l2_norm[half_l2_norm_loading_idx] :
+                std::numeric_limits<T>::infinity();
     }
 }
 
