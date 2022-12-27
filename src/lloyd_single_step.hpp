@@ -72,8 +72,6 @@ lloyd_single_step(
             auto G = sycl::range<1>(global_size);
             auto L = sycl::range<1>(work_group_size);
 
-            sycl::stream out(1024, 256, cgh);
-
             // allocate SLM
             using slm_cwT = sycl::local_accessor<T, 2>;
             slm_cwT centroids_window(sycl::range<2>(centroids_window_height, (window_n_centroids + 1)), cgh);
@@ -115,7 +113,7 @@ lloyd_single_step(
 
                         size_t first_feature_idx = 0;
 
-                        for(size_t i1 = 0; i1 < n_windows_for_centroid; ++i1) {
+                        for(size_t i1 = 0; i1 < n_windows_for_feature; ++i1) {
                             _load_window_of_centroids_and_features(
                                 n_clusters,
                                 n_features,
