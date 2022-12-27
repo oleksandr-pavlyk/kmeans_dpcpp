@@ -670,7 +670,7 @@ def test_assignment_fp32():
     ht1, e_hl2n = kdp.half_l2_norm_squared(centroid_t, hl2n,
         work_group_size=256, sycl_queue=q)
 
-    ht2, _ = kdp.assignment(
+    ht2, e_assign = kdp.assignment(
         Xt, centroid_t, hl2n, assigned_id,
         centroids_window_height = 8,
         work_group_size=256,
@@ -680,6 +680,8 @@ def test_assignment_fp32():
 
     ht1.wait()
     ht2.wait()
+    e_assign.wait()
+    e_hl2n.wait()
 
     expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
 
@@ -1073,7 +1075,7 @@ def test_kmeans_lloyd_driver_fp32():
         Xt, sample_weight, init_centroids_t, assignment_ids, res_centroids_t,
         tol, verbosity, max_iters, centroids_window_height, work_group_size,
         centroids_private_copies_max_cache_occupancy,
-        q
+        sycl_queue=q
     )
 
     expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
@@ -1081,6 +1083,7 @@ def test_kmeans_lloyd_driver_fp32():
 
     assert n_iters_ < max_iters
     assert n_iters_ == 2
+    q.wait()
 
 
 @pytest.mark.skipif(_no_fp64_support(),
@@ -1133,7 +1136,7 @@ def test_kmeans_lloyd_driver_fp64():
         Xt, sample_weight, init_centroids_t, assignment_ids, res_centroids_t,
         tol, verbosity, max_iters, centroids_window_height, work_group_size,
         centroids_private_copies_max_cache_occupancy,
-        q
+        sycl_queue=q
     )
 
     expected_ids = np.repeat(np.arange(8, dtype=indT), cloud_size)
@@ -1141,3 +1144,4 @@ def test_kmeans_lloyd_driver_fp64():
 
     assert n_iters_ < max_iters
     assert n_iters_ == 2
+    q.wait()
