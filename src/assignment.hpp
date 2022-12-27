@@ -129,11 +129,10 @@ assignment(
                             dot_products.data()
                         );
                         first_centroid_idx += window_n_centroids;
-
-                        it.barrier(sycl::access::fence_space::local_space);
-
                         min_idx = closest.first;
                         min_sample_pseudo_inertia = closest.second;
+
+                        it.barrier(sycl::access::fence_space::local_space);
                     }
 
                     if (sample_idx < n_samples) {
