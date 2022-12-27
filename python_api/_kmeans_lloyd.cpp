@@ -522,7 +522,7 @@ py_relocate_empty_clusters(
 
     comp_ev = relocate_empty_clusters<dataT, indT>(
       q,
-      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_samples, n_features, n_clusters, work_group_size,
       n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
       assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
       sq_dist_to_nearest_centroid.get_data<dataT>(),
@@ -536,7 +536,7 @@ py_relocate_empty_clusters(
 
     comp_ev = relocate_empty_clusters<dataT, indT>(
       q,
-      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_samples, n_features, n_clusters, work_group_size,
       n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
       assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
       sq_dist_to_nearest_centroid.get_data<dataT>(),
@@ -550,7 +550,7 @@ py_relocate_empty_clusters(
 
     comp_ev = relocate_empty_clusters<dataT, indT>(
       q,
-      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_samples, n_features, n_clusters, work_group_size,
       n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
       assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
       sq_dist_to_nearest_centroid.get_data<dataT>(),
@@ -564,7 +564,7 @@ py_relocate_empty_clusters(
 
     comp_ev = relocate_empty_clusters<dataT, indT>(
       q,
-      n_samples, n_features, static_cast<indT>(n_clusters), work_group_size,
+      n_samples, n_features, n_clusters, work_group_size,
       n_empty_clusters, X_t.get_data<dataT>(), sample_weights.get_data<dataT>(),
       assignment_id.get_data<indT>(), empty_clusters_list.get_data<indT>(),
       sq_dist_to_nearest_centroid.get_data<dataT>(),
@@ -579,7 +579,8 @@ py_relocate_empty_clusters(
   sycl::event ht_ev = dpctl::utils::keep_args_alive(q,
     {
       X_t, sample_weights, assignment_id, empty_clusters_list,
-      sq_dist_to_nearest_centroid, centroid_t, cluster_sizes
+      sq_dist_to_nearest_centroid, centroid_t, cluster_sizes,
+      per_sample_inertia
     },
     {comp_ev}
   );
