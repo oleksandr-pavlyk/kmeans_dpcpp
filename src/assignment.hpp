@@ -33,7 +33,7 @@ assignment(
     size_t n_windows_for_feature = quotient_ceil(n_features, centroids_window_height);
     size_t n_windows_for_centroid = quotient_ceil(n_clusters, window_n_centroids);
 
-    sycl::event e = 
+    sycl::event e =
         q.submit([&](sycl::handler &cgh) {
             cgh.depends_on(depends);
 
@@ -82,7 +82,7 @@ assignment(
 
                         size_t first_feature_idx = 0;
 
-                        for(size_t i1 = 0; i1 < n_windows_for_centroid; ++i1) {
+                        for(size_t i1 = 0; i1 < n_windows_for_feature; ++i1) {
                             _load_window_of_centroids_and_features(
                                 n_clusters,
                                 n_features,
@@ -102,7 +102,7 @@ assignment(
 
                             constexpr bool acummulate_dot_product = true;
                             _acummulate_sum_of_ops<T, decltype(centroids_window), decltype(dot_products), acummulate_dot_product>(
-                                n_samples, 
+                                n_samples,
                                 n_features,
                                 centroids_window_height,
                                 window_n_centroids,
