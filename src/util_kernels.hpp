@@ -353,11 +353,27 @@ relocate_empty_clusters_kernel(
                         size_t index = (n_selected_gt_threshold_ == 0) ? (n_samples - 1) : (n_selected_gt_threshold_ - 1 - relocated_idx);
 
                         // new_location_X_idx - index of sample point that becomes a new centroid
-                        indT new_location_X_idx = samples_far_from_center[index];
-                        indT new_location_previous_assignment = assignment_id[new_location_X_idx];
+                        size_t in_bound_index = std::min(index, n_samples - 1);
+                        if (index != in_bound_index) {
+                            cluster_sizes[0] = -1;
+                            return;
+                        }
+                        indT new_location_X_idx = samples_far_from_center[in_bound_index];
+                        indT new_location_sample_id = std::min(std::max(indT(0), new_location_X_idx), static_cast<indT>(n_samples)-1);
+                        if (new_location_X_idx != new_location_sample_id) {
+                            cluster_sizes[1] = -2;
+                            return;
+                        }
+                        indT new_location_previous_assignment = assignment_id[new_location_sample_id];
+                        indT new_location_previous_assignment_bounded =
+                            std::min(std::max(indT(0), new_location_previous_assignment), static_cast<indT>(n_clusters)-1);
+                        if (new_location_previous_assignment_bounded != new_location_previous_assignment) {
+                            cluster_sizes[2] = -3;
+                            return;
+                        }
 
-                        dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_X_idx];
-                        dataT new_location_weight = sample_weight[new_location_X_idx];
+                        dataT new_centroid_value = X_t[feature_idx * n_samples + new_location_sample_id];
+                        dataT new_location_weight = sample_weight[new_location_sample_id];
                         dataT X_centroid_addend = new_centroid_value * new_location_weight;
 
                         auto atomic_centroid_component_ref =
@@ -371,7 +387,7 @@ relocate_empty_clusters_kernel(
                         centroids_t[feature_idx * n_clusters + relocated_cluster_idx] = X_centroid_addend;
 
                         if (feature_idx == 0) {
-                            per_sample_inertia[new_location_X_idx] = dataT(0);
+                            per_sample_inertia[new_location_sample_id] = dataT(0);
                             auto atomic_cluster_size_ref =
                             sycl::atomic_ref<
                                     dataT,

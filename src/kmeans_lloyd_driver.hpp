@@ -44,7 +44,7 @@ size_t driver_lloyd(
 {
     const auto &alloc_ctx = exec_q.get_context();
     const auto &alloc_dev = exec_q.get_device();
-  
+
     // USM temporary allocations, scheduled to be freed when computations complete
     dataT *centroids_half_l2_norm = sycl::malloc_device<dataT>(n_clusters, alloc_dev, alloc_ctx);
 
@@ -56,17 +56,17 @@ size_t driver_lloyd(
     dataT *per_sample_inertia = sycl::malloc_device<dataT>(n_samples, alloc_dev, alloc_ctx);
     dataT *sq_distance_to_nearest_centroid = per_sample_inertia;
 
-    size_t n_centroids_private_copies = 
+    size_t n_centroids_private_copies =
         compute_number_of_private_copies<dataT, preferred_work_group_size_multiple, centroids_window_width_multiplier>(
             exec_q, n_samples, n_features, n_clusters, centroids_private_copies_max_cache_occupancy, work_group_size
         );
 
     size_t new_centroids_t_private_copies_size =
-        n_centroids_private_copies * n_features * n_clusters; 
-    dataT *new_centroids_t_private_copies = sycl::malloc_device<dataT>( 
+        n_centroids_private_copies * n_features * n_clusters;
+    dataT *new_centroids_t_private_copies = sycl::malloc_device<dataT>(
         new_centroids_t_private_copies_size, alloc_dev, alloc_ctx);
 
-    size_t cluster_sizes_private_copies_size = 
+    size_t cluster_sizes_private_copies_size =
         n_centroids_private_copies * n_clusters;
     dataT *cluster_sizes_private_copies = sycl::malloc_device<dataT>(
         cluster_sizes_private_copies_size, alloc_dev, alloc_ctx);
@@ -80,36 +80,47 @@ size_t driver_lloyd(
     dataT *this_centroids_t = init_centroids_t;
     dataT *new_centroids_t = res_centroids_t;
 
+    std::cout << "Starting iterations..." << std::endl;
+
     while( (n_iterations < max_iter) && (centroid_shifts_sum > tol) ) {
+
+	std::cout << n_iterations << " , step 0" << std::endl;
 
         // populate centroids_half_norm
         sycl::event half_l2_norm_ev = half_l2_norm_kernel<dataT>(
             exec_q,
             n_features, n_clusters, work_group_size,
             //
-            this_centroids_t, 
+            this_centroids_t,
             centroids_half_l2_norm);
+
+	std::cout << n_iterations << " , step 1" << std::endl;
 
         // zero out cluster_sizes_private_copies
         sycl::event reset_cluster_sizes_private_copies_ev =
             exec_q.fill<dataT>(
-                cluster_sizes_private_copies, 
-                dataT(0), 
+                cluster_sizes_private_copies,
+                dataT(0),
                 cluster_sizes_private_copies_size
             );
 
+	std::cout << n_iterations << " , step 2" << std::endl;
+
         // zero out new_centroids_t_private_copies
-        sycl::event reset_centroids_private_copies_ev = 
+        sycl::event reset_centroids_private_copies_ev =
             exec_q.fill<dataT>(
                 new_centroids_t_private_copies,
                 dataT(0),
                 new_centroids_t_private_copies_size
             );
 
+	std::cout << n_iterations << " , step 3" << std::endl;
+
         // n_empty_clusters[0] = np.int32(0)
-        sycl::event set_n_empty_clusters_ev = 
+        sycl::event set_n_empty_clusters_ev =
             exec_q.fill<indT>(n_empty_clusters, indT(0), 1);
 
+	std::cout << n_iterations << " , step 4" << std::endl;
         /*
             fused_lloyd_fixed_window_single_step_kernel(
                 X_t,
@@ -121,18 +132,18 @@ size_t driver_lloyd(
                 cluster_sizes_private_copies,
             )
         */
-        sycl::event lloyd_step_ev = 
+        sycl::event lloyd_step_ev =
             lloyd_single_step<
-                dataT, indT, preferred_work_group_size_multiple, 
+                dataT, indT, preferred_work_group_size_multiple,
                 centroids_window_width_multiplier
             >(
-                exec_q, 
+                exec_q,
                 n_samples, n_features, n_clusters,
                 centroids_window_height,
                 n_centroids_private_copies,
                 work_group_size,
-                // 
-                X_t, 
+                //
+                X_t,
                 sample_weight,
                 this_centroids_t,
                 centroids_half_l2_norm,
@@ -142,7 +153,8 @@ size_t driver_lloyd(
                 {half_l2_norm_ev, reset_centroids_private_copies_ev, reset_cluster_sizes_private_copies_ev}
             );
 
-        /* 
+	std::cout << n_iterations << " , step 5" << std::endl;
+        /*
         reduce_centroid_data_kernel(
                 cluster_sizes_private_copies,
                 new_centroids_t_private_copies,
@@ -152,11 +164,11 @@ size_t driver_lloyd(
                 n_empty_clusters,
             )
         */
-        sycl::event reduce_centroid_data_ev = 
+        sycl::event reduce_centroid_data_ev =
             reduce_centroid_data_kernel<dataT, indT>(
-                exec_q, 
+                exec_q,
                 n_centroids_private_copies,
-                n_features, 
+                n_features,
                 n_clusters,
                 work_group_size,
                 //
@@ -166,17 +178,18 @@ size_t driver_lloyd(
                 new_centroids_t,       // OUT  (n_features, n_clusters,)
                 empty_clusters_list,   // OUT  (n_clusters,)
                 n_empty_clusters,      // OUT  (1,)
-                {lloyd_step_ev}
+                {set_n_empty_clusters_ev, lloyd_step_ev}
             );
 
+	std::cout << n_iterations << " , step 6" << std::endl;
         if (verbose) {
-            // auto compute_inertia_ev = compute_inertia_kernel<dataT>(exec_q, 
+            // auto compute_inertia_ev = compute_inertia_kernel<dataT>(exec_q,
             // X_t, sample_weight, new_centroids_t, assignment_idx, per_sample_inertia,
             // {reduce_centroid_data_ev});
 
             // auto interia_reduce_ev = reduce_inertia_kernel<dataT>(
             //     exec_q, per_sample_inertia, {compute_inertial_ev});
-            sycl::event compute_inertia_ev = 
+            sycl::event compute_inertia_ev =
                 compute_inertia_kernel<dataT>(
                     exec_q,
                     n_samples, n_features, n_clusters, work_group_size,
@@ -193,12 +206,12 @@ size_t driver_lloyd(
                     exec_q,
                     n_samples,
                     per_sample_inertia,
-                    {compute_inertia_ev} 
+                    {compute_inertia_ev}
                 );
 
             std::stringstream ss;
             ss << "Iteration: " << n_iterations << " "
-               << "Inertia: " << iteration_total_inertia 
+               << "Inertia: " << iteration_total_inertia
                << std::endl;
 
             print_func(ss);
@@ -206,16 +219,17 @@ size_t driver_lloyd(
 
         indT host_n_empty_clusters;
 
-        sycl::event n_empty_clusters_copy_ev = 
+        sycl::event n_empty_clusters_copy_ev =
             exec_q.copy<indT>(n_empty_clusters, &host_n_empty_clusters, 1, {reduce_centroid_data_ev});
         n_empty_clusters_copy_ev.wait();
 
         // n_empty_clusters_ = int(n_empty_clusters[0])
 
+	std::cout << n_iterations << " , step 7: " << host_n_empty_clusters << std::endl;
         sycl::event relocate_empty_clusters_ev{};
 
         if (host_n_empty_clusters > 0) {
-            /* 
+            /*
               NB: empty cluster very rarely occurs, and it's more efficient to
               compute inertia and labels only after occurrences have been detected
               at the cost of an additional pass on data, rather than computing
@@ -223,7 +237,7 @@ size_t driver_lloyd(
               empty cluster.
             */
 
-            sycl::event assignment_ev;
+            sycl::event assignment_ev{};
             if (!verbose) {
                 /*
                 assignment_fixed_window_kernel(
@@ -236,15 +250,15 @@ size_t driver_lloyd(
                 assignment_ev =
                     assignment<
                         dataT, indT,
-                        preferred_work_group_size_multiple, 
+                        preferred_work_group_size_multiple,
                         centroids_window_width_multiplier
                     >(
                         exec_q,
-                        n_samples, n_features, n_clusters, 
+                        n_samples, n_features, n_clusters,
                         centroids_window_height, work_group_size,
                         //
-                        X_t, this_centroids_t, 
-                        centroids_half_l2_norm, 
+                        X_t, this_centroids_t,
+                        centroids_half_l2_norm,
                         assignment_id
                     );
             }
@@ -264,13 +278,13 @@ size_t driver_lloyd(
                     sq_dist_to_nearest_centroid,
                 )
                 */
-                compute_inertia_ev = 
+                compute_inertia_ev =
                     compute_uniform_weight_inertia_kernel<dataT>(
                         exec_q,
                         n_samples, n_features, n_clusters, work_group_size,
-                        // 
+                        //
                         X_t,
-                        this_centroids_t, 
+                        this_centroids_t,
                         assignment_id,
                         sq_distance_to_nearest_centroid,
                         {assignment_ev}
@@ -292,7 +306,7 @@ size_t driver_lloyd(
                     compute_dtype,
                 )
             */
-            relocate_empty_clusters_ev = 
+            relocate_empty_clusters_ev =
                 relocate_empty_clusters<dataT, indT>(
                     exec_q,
                     n_samples, n_features, n_clusters,
@@ -318,26 +332,30 @@ size_t driver_lloyd(
             broadcast_division_kernel<dataT>(
                 exec_q,
                 n_features, n_clusters, work_group_size,
-                // 
-                new_centroids_t, 
+                //
+                new_centroids_t,
                 cluster_sizes,
                 {relocate_empty_clusters_ev}
             );
+
+	std::cout << n_iterations << " , step 8" << std::endl;
 
         // centroid_shifts = np.square(new_centroids_t - centroids_t).sum(axis=0)
         // compute_centroid_shifts_kernel(
         //     centroids_t, new_centroids_t, centroid_shifts
         // )
-        sycl::event compute_centroid_shifts_ev = 
+        sycl::event compute_centroid_shifts_ev =
             compute_centroid_shifts_squared_kernel<dataT>(
                 exec_q,
                 n_features, n_clusters, work_group_size,
                 //
                 this_centroids_t,     // IN
                 new_centroids_t, // IN
-                centroid_shifts, // OUT 
+                centroid_shifts, // OUT
                 {broadcast_division_ev}
             );
+
+	std::cout << n_iterations << " , step 9" << std::endl;
 
         // centroid_shifts_sum, *_ = reduce_centroid_shifts_kernel(centroid_shifts)
         centroid_shifts_sum = reduce_vector_kernel_blocking<dataT>(
@@ -347,6 +365,7 @@ size_t driver_lloyd(
             {compute_centroid_shifts_ev}
         );
 
+	std::cout << n_iterations << " , step 10" << std::endl;
         // centroids_t, new_centroids_t = (new_centroids_t, centroids_t)
         std::swap(this_centroids_t, new_centroids_t);
 
@@ -357,14 +376,16 @@ size_t driver_lloyd(
     // # centroids found, along with the exact inertia.
     // half_l2_norm_kernel(centroids_t, centroids_half_l2_norm)
 
-    sycl::event final_half_l2_norm_ev = 
+    std::cout << "Finished main loop: step 0" << std::endl;
+    sycl::event final_half_l2_norm_ev =
         half_l2_norm_kernel<dataT>(
             exec_q,
             n_features, n_clusters, work_group_size,
             //
-            this_centroids_t, 
+            this_centroids_t,
             centroids_half_l2_norm);
 
+    std::cout << "Finished main loop: step 1" << std::endl;
     // assignment_fixed_window_kernel(
     //     X_t, centroids_t, centroids_half_l2_norm, assignments_idx
     // )
@@ -372,24 +393,25 @@ size_t driver_lloyd(
     sycl::event final_assignment_ev =
         assignment<
             dataT, indT,
-            preferred_work_group_size_multiple, 
+            preferred_work_group_size_multiple,
             centroids_window_width_multiplier
         >(
             exec_q,
-            n_samples, n_features, n_clusters, 
+            n_samples, n_features, n_clusters,
             centroids_window_height, work_group_size,
             //
-            X_t, this_centroids_t, 
-            centroids_half_l2_norm, 
+            X_t, this_centroids_t,
+            centroids_half_l2_norm,
             assignment_id,
             {final_half_l2_norm_ev}
         );
+    std::cout << "Finished main loop: step 2" << std::endl;
 
 
     // compute_inertia_kernel(
     //     X_t, sample_weight, centroids_t, assignments_idx, per_sample_inertia
     // )
-    sycl::event final_compute_inertia_ev = 
+    sycl::event final_compute_inertia_ev =
         compute_inertia_kernel<dataT>(
             exec_q,
             n_samples, n_features, n_clusters, work_group_size,
@@ -401,9 +423,12 @@ size_t driver_lloyd(
             {final_assignment_ev}
         );
 
+    std::cout << "Finished main loop: step 3" << std::endl;
+
     sycl::event final_copy_ev;
     if (this_centroids_t != res_centroids_t) {
         final_copy_ev = exec_q.copy<dataT>(this_centroids_t, res_centroids_t, n_features * n_clusters);
+         std::cout << "Finished main loop, made a copy" << std::endl;
     }
 
     // inertia = dpt.asnumpy(reduce_inertia_kernel(per_sample_inertia))
@@ -414,10 +439,11 @@ size_t driver_lloyd(
             exec_q,
             n_samples,
             per_sample_inertia,
-            {final_compute_inertia_ev} 
+            {final_compute_inertia_ev}
         );
 
     final_copy_ev.wait();
+    std::cout << "Finished main loop: step 4, n_iterations: " << n_iterations << std::endl;
 
     sycl::free(centroids_half_l2_norm, alloc_ctx);
     sycl::free(cluster_sizes, alloc_ctx);
