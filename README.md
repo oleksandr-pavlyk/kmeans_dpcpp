@@ -72,3 +72,15 @@ CXX=icpx python setup.py develop -- -DDPCTL_MODULE_PATH=$(python -m dpctl --cmak
 ```bash
 python -m pytest -s tests/
 ```
+
+
+## Building fat binary for both SPIRV64 and NVPTX devices
+
+Assuming that CodePlay's plugin enabling support of NVidia GPUs is installed, as well as CUDAToolkit
+and the drivers:
+
+```
+CXX=icpx python setup.py develop -- -DDPCTL_MODULE_PATH=$(python -m dpctl --cmakedir) -DCUDA=ON
+```
+
+`dpctl` compiled with CUDA support is also needed.
