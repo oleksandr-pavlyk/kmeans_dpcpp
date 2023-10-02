@@ -242,6 +242,9 @@ iterative_merge_sort(
                 sycl::local_accessor<std::byte, 1>
                     scratch({temp_memory_size}, cgh);
 
+                // (lws / 16) - number of threads in each WG
+                //   Goal: maximize number of threads
+                //   SLM: 128K divided over WI in WG
                 if (n % lws == 0)
                 {
                     cgh.parallel_for(
